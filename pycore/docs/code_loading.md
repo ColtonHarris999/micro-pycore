@@ -1,0 +1,203 @@
+# PyCore code loading
+
+How bytecode gets into memory and becomes executable. Companion to
+`architecture.md` (memory map) and `object_model.md` (code objects).
+
+Status: **code ROM + code RAM + fetch mux + runtime writers shipped.**
+`_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` write
+code RAM; `_bi_code_kind` returns the raw 4-bit tag as `INT` for ROM
+`exec`/`eval` string dispatch.
+code RAM and fabricate `CODE_OBJECT` handles (`compiler_design.md` step C).
+The module image format and loader are not implemented yet; §4 records the
+intended design so the region layout is not re-litigated when it lands.
+
+## 1. The code address space
+
+The PC is a **slot index**, not a byte address; fetch converts it with
+`pc << 3` because every code word is 8 bytes. Two banks share that space:
+
+```text
+slot 0x0000 .. 0x1FFF   CODE ROM   pycore_ram (code half)  READ_ONLY, $readmemh      64 KB /  8192 slots
+slot 0x2000 .. 0x21FFF  CODE RAM   pycore_ram (code half)  writable                   1 MB / 131072 slots
+```
+
+`PYCORE_CODE_RAM_SLOT_BASE` (`0x2000`) is exactly the ROM's slot count
+(`PYCORE_IMEM_BLOCK_COUNT * 4096 / 8`), so the regions abut and
+**`entry_slot` semantics do not change**: code in RAM is simply code with a
+large entry slot. `pycore/tests/test_code_ram.py` pins that relationship, along
+with the tooling mirrors in `encoding.py`, so the two copies of the geometry
+cannot drift.
+
+The live fetch/write path is `pycore_mem_hier` → `pycore_ram.sv` (both
+`pycore_system.sv` and `pycore_excore_system.sv`). `pycore_code_mem.sv` /
+`pycore_code_ram.sv` remain in `PYCORE_RTL_SRCS` but are **not instantiated**;
+they are the Plan-1 mux study. Do not treat them as the fetch path.
+
+A request at or beyond `PYCORE_CODE_RAM_SLOT_LIMIT` has no bank to answer it, so
+the mux synthesises `fault_o` **and still acks** — a silent wrap or a hang would
+both be worse than a fault.
+
+### 1.1 Why two regions instead of one big writable imem
+
+Making imem larger and writable would work in simulation and is a smaller diff,
+but it gives up two things:
+
+- **The ROM guarantee.** A buggy loader or a runaway code generator cannot
+  corrupt the boot image, for the same reason real machines boot from mask ROM.
+- **A relocation story.** Keeping a fixed ROM and a separately-addressed RAM is
+  what makes "load this module somewhere" a meaningful operation (§4).
+
+The cost is one address compare and a 2:1 mux.
+
+### 1.2 Sizing rationale
+
+Unmodified [PyCPython](https://github.com/ColtonHarris999/PyCPython) (the host
+`compile()` oracle at `vendor/pycpython`) is about 1 MB of Python and does
+not fit. A PyCore-subset firmware compiler still wants on the order of
+10 000–30 000 code slots. Today's entire ROM is 8192 slots and already holds
+the boot image and ROM firmware. Code RAM is 131 072 slots (1 MB): the
+resident host-built compiler is about 56 000 slots, and a second copy of
+that image has to fit beside it before self-host can emit. 65 536 slots
+(512 KB, the T4 size) left fewer free slots than one resident copy.
+
+`PYCORE_CODE_RAM_BLOCK_COUNT` is a parameter. If that is too much area for a
+real target, the answer is not a smaller compiler but **overlays**: the loader
+in §4 exists so a module can be loaded, replaced, or paged rather than all
+resident at once.
+
+## 2. What can write code RAM
+
+The banks, fetch path, and on-core writers are in:
+
+| Writer | Status | Mechanism |
+| --- | --- | --- |
+| Image preload (`CODE_RAM_HEX`) | **shipped** | `$readmemh` at elaboration; test-only |
+| `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` | **shipped** | bump-reserve, multi-word blit, one-slot patch, fabricate `CODE_OBJECT` |
+| `_bi_code_kind` | **shipped** | 1-arg; returns the raw 4-bit tag as `INT` (ROM `exec`/`eval` string dispatch) |
+| `_bi_load_module` | later | copies a module image's text section into RAM |
+
+The code-RAM bump cursor `code_ram_ptr_r` starts at `CODE_RAM_INIT_SLOT`
+(plusarg `+CODE_RAM_INIT_SLOT=`, default `PYCORE_CODE_RAM_SLOT_BASE`). Alloc
+moves it forward; mark/release still restore it. Writes below
+`code_ram_floor_r` (the reset cursor) trap `MEM_FAULT`.
+
+The image builder reports `CODE_RAM_INIT_SLOT` in `image.meta` as
+`PYCORE_CODE_RAM_SLOT_BASE + N`, where `N` is the number of slots in
+`code_ram.hex`. Step D preloads the firmware package (every top-level `def`
+under `pycore_firmware/compiler/`, plus the `_PYC_ENTRY` trampoline) into
+that bank at elaboration. Step E also seeds generated `tables.py` constants
+(`TOK_*`, `KEYWORDS`, `OPMAP`, `ND`, …) into `_PYC_G` next to those functions.
+Those slots sit below the write floor, so they are
+as unwritable as ROM. Ordinary ROM images still emit `program.hex` for the
+boot image and ROM firmware; `code_ram.hex` holds only the package.
+`--code-ram` (Plan 1 P1) still relocates the *whole* user image into RAM and
+skips the package so the two preloads cannot overlap.
+
+**Excore cannot write code memory at all.** The two cores share dmem but keep
+private instruction memories, so every code-memory writer must run on-core.
+
+**Self-modification is not supported.** Writing a slot that is currently
+executing is undefined; code must be fully emitted before it is called.
+
+## 3. Testing the region mux
+
+Because the mux must be *transparent*, the test is a differential against
+itself: `img_code_ram_call.py` is built and run twice —
+
+- `pycore-img-code-ram-call-rom` — an ordinary ROM image.
+- `pycore-img-code-ram-call` — built with `--code-ram`, which offsets every
+  entry slot by `CODE_RAM_SLOT_BASE`, writes the slots to `code_ram.hex`, and
+  runs with an **empty ROM** so a fetch that did not reach RAM could not work.
+
+Both must return the same value. The program deliberately includes nested calls,
+a backward branch, and builtin calls so the check covers redirects rather than
+straight-line fetch only.
+
+`--code-ram` threads a `slot_base` through the serializer
+(`_ImageSerializer.slot_base`); `test_code_ram.py` asserts that relocating an
+image shifts every entry slot by exactly the base and changes nothing else
+about the emitted slots.
+
+## 4. Planned: module images and relocation
+
+Not implemented. Recorded here because §1's layout was chosen for it.
+§11.7 stays closed while the compiler package fits code RAM (about
+56 000 of 131 072 slots). Open this only when occupancy forces overlays
+(`compiler_design.md` §7 lever 3), not for its own sake.
+
+A module is **not** just code: it is code slots plus a dmem object graph
+(`co_consts`, `co_names`, nested code objects, strings). Loading one means
+placing both and fixing up the cross-references — the ELF-like step.
+
+```text
+PyCore module image (16-byte aligned blob in dmem)
+  +0x00  magic 'PYCM' + version
+  +0x08  text_slots
+  +0x0C  data_bytes
+  +0x10  entry_offset      offset of the entry CODE_OBJECT within the data section
+  +0x14  reloc_count
+  +0x18  flags
+  text section              text_slots x 8 bytes; entry_slot fields MODULE-RELATIVE
+  data section              data_bytes; handles DATA-SECTION-RELATIVE
+  reloc table               { kind[7:0], offset[31:0] }
+                            kind 0 = TEXT_SLOT_IN_DATA (add text_base)
+                            kind 1 = DATA_ADDR_IN_DATA (add data_base)
+```
+
+Two relocation kinds suffice because those are the only two absolute address
+spaces a module references; the kind byte leaves room for a third without a
+format version bump.
+
+`_bi_load_module(image_addr) -> CODE_OBJECT` validates the header, reserves
+`text_slots` from `code_ram_ptr_r`, copies the text, bump-allocates
+`data_bytes` on the heap, copies the data, applies relocations, and returns the
+entry handle. Overflow of either region, or a relocation offset outside its
+section, must fault rather than corrupt.
+
+Intended phasing: fixed-base copy first, then text relocation, then data
+relocation, then two modules where the second base depends on the first.
+
+## 5. Region marks (shipped)
+
+Both the heap and code RAM are bump allocators with no collector, so a program
+that loads modules or compiles repeatedly would leak until reset. Four
+primitives make lifetimes reclaimable when they nest:
+
+| Builtin | Behaviour |
+| --- | --- |
+| `_bi_heap_mark()` | Returns `heap_ptr_r` |
+| `_bi_heap_release(mark)` | Restores `heap_ptr_r` |
+| `_bi_code_mark()` | Returns `code_ram_ptr_r` |
+| `_bi_code_release(mark)` | Restores `code_ram_ptr_r` |
+
+A release validates that the mark lies inside its region and at or below the
+current cursor; a stale or out-of-region mark raises `PY_TRAP_MEM_FAULT` rather
+than "un-freeing" memory that was never allocated.
+
+**Compile lifetime.** `compile()` does not mark/release internally. The
+caller owns the bump cursors:
+
+```python
+hm = _bi_heap_mark(); cm = _bi_code_mark()
+code = compile(src, "<s>", "exec")
+exec(code)
+_bi_code_release(cm); _bi_heap_release(hm)
+```
+
+Releasing invalidates every handle allocated after the mark. `_bi_code_new`
+and `_bi_heap_release` flush CODC and GIC so a recycled address cannot
+alias a cached code object (`memory_hierarchy.md`). Device:
+`img_compile_repeat` (R4 watermark) and `img_compile_release_realloc`
+(R7 second compile after release).
+
+**This is not garbage collection, and must not be treated as such.** Releasing
+to a mark invalidates every handle allocated after it, with no detection: a
+surviving reference becomes a dangling handle that will read whatever the next
+allocation puts there. The rule is therefore: **release only when nothing
+allocated after the mark can still be reachable**, and let one owner (the BIOS,
+once it exists) hold the marks rather than scattering them through firmware.
+
+Heap objects allocated by `compile()` are reclaimed by the mark-and-sweep
+collector in [`gc.md`](gc.md). Code RAM is not: a compile loop still grows
+code RAM without a matching release. That ceiling is out of scope for the
+collector.

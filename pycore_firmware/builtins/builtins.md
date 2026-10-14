@@ -1,0 +1,239 @@
+# pycore builtins (firmware ROM)
+
+Pure-Python sources for names resolved on the LEGB **B**uiltin
+lookup. The image builder compiles each module listed in
+`ROM_FIRMWARE_BUILTINS` (`pycore/tools/image_from_source.py`) and seeds
+it into the boot-record builtins dict of every image. Native methods
+(`list.append`, `dict.get`, …) are seeded into the native-method table
+instead (`ROM_NATIVE_METHODS`). A `.py` file here that is in neither
+list is **not** in the image; see the status column.
+
+**Architecture:** prefer hardware `OBK_BUILTIN` / `BI_*` CALL fast paths
+for known tags; keep these `.py` bodies as **miss / protocol**
+implementations (see `planning/old/implemented/builtins_bytecode_support_plan.md`).
+Example: `BI_LEN` reads container headers; Python `len` should only
+handle `obj.__len__()`, not recount with a for-loop.
+
+Status values: **not implemented** (stub only), **blocked** (stub +
+documented hard dependency), **in progress** (partial pure-Python with
+known gaps), **implemented** (pure-Python source ready for ROM compile
+on the supported opcode subset), **in ROM** (compiled into the boot
+image as a `CODE_OBJECT`), **native** (a hardware `BI_*` owns the
+builtins-dict entry and no pure-Python body is possible).
+
+## Cross-cutting pycore constraints
+
+These limit every firmware builtin:
+
+| Constraint | Impact |
+| --- | --- |
+| Firmware raises use Wave A exception types | ROM helpers raise catchable `TypeError`, `ValueError`, or `StopIteration` as appropriate. An unhandled Python raise ends in `PY_TRAP_RAISE` (17). |
+| **`CALL_KW` / `CALL_FUNCTION_EX` unfrozen** | Hardware binder supports keyword / `*args` / `**kwargs` calls on `CODE_OBJECT`. ROM modules may use `sep=` / `key=` / `*args` when implemented as Python `CODE_OBJECT`s. Native `OBK_BUILTIN` / `BI_*` paths remain positional-only (`CALL_FILTER` on kwargs). |
+| No `YIELD_VALUE` | `enumerate`/`zip`/`map`/`filter`/`reversed` return lists, not iterators |
+| `TO_BOOL` widened | `None` + LIST/TUPLE/DICT/SET/inline RANGE truthiness work; `OBJECT` `__bool__`/`__len__` protocol still TYPE-traps |
+| `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on containers; **SHORT_STR ordering works** |
+| No negative indices | `reversed` counts length explicitly |
+| Comprehensions emit `RERAISE` | Policy C: prefer `out += [x]` / `{*iterable}` (see `bytecode_support.md`) |
+| List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |
+| Native type methods | `lst.append` / `s.add` / `d.get` / `str.join` etc. are `LOAD_ATTR` table hits (firmware `CODE_OBJECT`s in the boot sidecar). They are not public builtins-dict names. |
+| `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
+| Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`. `ord.md` / `chr.md` are shipped notes. |
+| Next plan | `planning/master_plan.md` §3–§4: `LOAD_SUPER_ATTR` / OBJECT `TO_BOOL`; F2 `getattr` / empty min/max |
+| `compile`/`exec`/`eval` | Landed: ROM `compile()` (T1–T6), code-object and string-form `exec`/`eval`, `bios()`. As built: `pycore/docs/compiler.md`. |
+
+## Builtin functions
+
+| Builtin | Description | Status | Notes |
+| --- | --- | --- | --- |
+| `abs` | Return the absolute value of a number. | in ROM | INT/BOOL/FLOAT via `<` + `UNARY_NEGATIVE`. COMPLEX (tag 3) calls `_bi_cabs` (hardware hypot → FLOAT). Other tags TYPE-trap on `<`. |
+| `aiter` | Return an asynchronous iterator for an asynchronous iterable. | blocked | Async/await deferred (`GET_AWAITABLE`/`SEND`). |
+| `all` | Return True if all elements of the iterable are true (or if empty). | in ROM | Uses widened TO_BOOL; empty → True. |
+| `anext` | Return the next item from an asynchronous iterator. | blocked | Async/await deferred. |
+| `any` | Return True if any element of the iterable is true. | in ROM | Uses widened TO_BOOL; empty → False. |
+| `ascii` | Return an ASCII-only repr, escaping non-ASCII characters. | blocked | `ord` / `chr` now available; still needs `repr` for str (quoting + `\xNN` / `\uNNNN` escape building). |
+| `bin` | Convert an integer to a binary string prefixed with '0b'. | in ROM | String concat digit loop. |
+| `bool` | Return a Boolean value; subclass of int used as the Boolean type. | in ROM | Truthiness only — does not fabricate a `bool` type object. |
+| `breakpoint` | Drop into the debugger at the call site (PEP 553). | blocked | No `sys.breakpointhook` / debugger. |
+| `bytearray` | Return a new mutable bytearray object. | blocked | Seeded as `BI_BYTEARRAY`; CALL → excore. Cannot alloc in pure Python. |
+| `bytes` | Return a new immutable bytes object. | blocked | `PY_TAG_BYTES` exists; no runtime constructor API. |
+| `callable` | Return True if the object appears callable. | in progress | Heuristic via `__call__` in `__dict__`; no tag probe for `CODE_OBJECT`. |
+| `chr` | Return the Unicode character for an integer code point. | native | `BI_CHR` (id 11): INT → one-character SHORT_STR, 1–4 UTF-8 bytes inline. Rejects > U+10FFFF, negatives, and lone surrogates → TYPE trap (CPython allows surrogates). |
+| `classmethod` | Transform a method into a class method. | blocked | No classmethod kind; image folding rejects `@classmethod`. |
+| `compile` | Compile source into a code object usable by exec/eval. | in ROM | ROM shim over the on-device compiler (T1–T6 grammar, closures); see `compile.md` and `pycore/docs/compiler.md`. `"single"` / `flags != 0` → `ValueError`. |
+| `complex` | Create a complex number from a real and an optional imaginary part. | native | `BI_COMPLEX` (id 25): argc 0 → `0j`; argc 1 INT/BOOL/FLOAT → `x+0j`, COMPLEX identity; argc 2 both real → `real+imag j`. A complex component, a string, or argc>2 → TYPE / CALL_FILTER. No string parse, no keywords. |
+| `delattr` | Delete a named attribute from an object. | in ROM | `del obj.__dict__[name]` (instance dict only; no MRO). |
+| `dict` | Create a new dictionary. | in ROM | From iterable of pairs via `UNPACK_SEQUENCE` + `STORE_SUBSCR`. No kwargs ctor. |
+| `dir` | Return a list of valid attribute names for an object or the local scope. | in progress | Instance `__dict__` keys only; no-arg / MRO names blocked. |
+| `divmod` | Return the pair (quotient, remainder) of integer division. | in ROM | `(a // b, a % b)`. |
+| `enumerate` | Return an enumerate object yielding (index, item) pairs. | in ROM | Returns a **list** of pairs (no YIELD). LIST grow needs excore. |
+| `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form (`"eval"` mode returns the expression value). String form probes `_bi_code_kind` and compiles SHORT_STR / LONG_STR (`img_eval_str_direct`). |
+| `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form probes `_bi_code_kind` and compiles (`img_exec_str_direct`). Non-code arg → `CALL_FILTER`. |
+| `filter` | Construct an iterator of items for which a function returns true. | in ROM | Returns a **list**; `function is None` uses TO_BOOL. LIST grow → excore. |
+| `float` | Convert a string or number to floating point. | in ROM | `_bi_code_kind` dispatch: STR → `_float_from_str` (correctly rounded for ≤ 18 significant digits, whitespace / underscores / `inf` / `nan`, ValueError on malformed); else `x * 1.0`. Residual: > 18 digits within ~1e-18 of a rounding boundary (`pycore/docs/limitations.md`). |
+| `format` | Convert a value to a formatted representation ("format_spec"). | in progress | Empty spec → INT/BOOL/None stringify; non-empty specs blocked (`FORMAT_WITH_SPEC`). |
+| `frozenset` | Return a new frozenset object. | blocked | `PY_TAG_FROZENSET` reserved / unimplemented. |
+| `getattr` | Return the named attribute of an object, with optional default. | in ROM | `obj.__dict__[name]` or default; instance dict only (no MRO). |
+| `globals` | Return the current global symbol table as a dict. | blocked | Frame globals pointer not exposed to Python. |
+| `hasattr` | Return True if the object has the named attribute. | in ROM | Probes `obj.__dict__`; instance dict only (no MRO). |
+| `hash` | Return the hash value of an object. | blocked | Hash is internal to dict/set probes; not callable from Python. |
+| `help` | Invoke the built-in help system. | blocked | No docstring store / interactive I/O. |
+| `hex` | Convert an integer to a lowercase hexadecimal string prefixed with '0x'. | in ROM | String concat digit loop. |
+| `id` | Return the identity (unique integer) of an object. | blocked | No address-expose primitive. |
+| `input` | Read a line from stdin (after an optional prompt) and return it. | blocked | No stdin device. |
+| `int` | Convert a number or string to an integer. | native | CALL on the seeded `int` `OBK_TYPE` (`OB_FLAG_INT_TYPE`): argc 0 → `0`; argc 1 `INT`/`BOOL` identity or decimal `SHORT_STR` (`+/-` + ASCII digits). Other tags / `base=` argc → TYPE. `from_bytes`/`to_bytes` stay on `tp_dict`. |
+| `isinstance` | Return True if the object is an instance of a type or tuple of types. | in ROM | Single-class `classinfo`; walks `obj.__class__` → `__base__` (depth ≤ 8). |
+| `issubclass` | Return True if a class is a subclass of a class or tuple of classes. | in ROM | Single-class `classinfo`; walks `cls.__base__` (depth ≤ 8). |
+| `iter` | Return an iterator for an object (or call a sentinel-producing callable). | in progress | One-arg materializes a list; sentinel form `raise`s (fatal). |
+| `len` | Return the number of items in a container. | implemented | Miss path: `obj.__len__()`. Native `BI_LEN` owns container header reads. |
+| `list` | Create a new list, optionally from an iterable. | in ROM | `out += [x]` per element (excore LIST_EXTEND). |
+| `locals` | Return the current local symbol table as a dict. | blocked | No frame-local namespace objects. |
+| `map` | Return an iterator that applies a function to every item of iterables. | in ROM | Single iterable → **list**. Multi-iter `*args` blocked. LIST grow needs excore. |
+| `max` | Return the largest item in an iterable or among arguments. | implemented | `(iterable)` or `(a, b)` only. Empty → `None`. Native `BI_MAX` still on-core for 2-arg. |
+| `memoryview` | Return a memory view object over a bytes-like object. | blocked | No buffer protocol / memoryview kind. |
+| `min` | Return the smallest item in an iterable or among arguments. | in ROM | `(iterable)` or `(a, b, *rest)` via `CO_VARARGS`. Empty iterable → `None`. No `key=` / `default=`. |
+| `next` | Retrieve the next item from an iterator. | in progress | List-queue pop of `[0]`; no real iterator protocol. |
+| `object` | Return a new featureless object; base for all classes. | blocked | No `OBK_INSTANCE` alloc without a class body. |
+| `oct` | Convert an integer to an octal string prefixed with '0o'. | in ROM | String concat digit loop. |
+| `open` | Open a file and return a corresponding file object. | blocked | See `open.md`. |
+| `ord` | Return the Unicode code point for a one-character string. | native | `BI_ORD` (id 10): one-character STR → INT. SHORT is a handle decode; LONG is STRACC `SA_ORD`. Non-STR / multi-character → TYPE trap. |
+| `pow` | Return base**exp, optionally modulo mod. | in ROM | `long_pow` semantics: result sign follows `mod`, `pow(x, 0, 1) == 0`, negative exp → modular inverse (ValueError if not invertible), overflow-safe `_mulmod` for `|mod|` up to 2 ** 62. |
+| `print` | Print objects to a stream (default stdout), separated by sep and ended by end. | in ROM | ROM `*args`/`sep=`/`end=` → `_bi_print` (`BI_PRINT` → `CONSOLE_TX`). LONG_STR Phase 2. |
+| `property` | Return a property attribute with optional getter/setter/deleter. | blocked | See `property.md`. |
+| `range` | Return an immutable sequence of numbers (start, stop, step). | implemented | Interim **list** materialization. Native `BI_RANGE` (`PY_TAG_RANGE`) preferred. |
+| `repr` | Return a string containing a printable representation of an object. | in progress | INT/BOOL/None only; containers/str quoting blocked. |
+| `reversed` | Return a reverse iterator over a sequence. | in ROM | Returns a **list**. LIST grow → excore. |
+| `round` | Round a number to a given precision in decimal digits. | in ROM | Ties to even; `round(x)` returns `int`; `round(x, n)` bit-identical to CPython for `|n| <= 22` via exact-tie detection (two-product); int `round(k, -n)`. NaN/inf 1-arg → ValueError. |
+| `set` | Create a new set, optionally from an iterable. | implemented | `{*()}` / `{*iterable}` → SET_UPDATE (excore). Native `BI_SET` still on-core. |
+| `setattr` | Set a named attribute on an object. | in ROM | `obj.__dict__[name] = value` (instance dict only). |
+| `slice` | Return a slice object representing indices for extended slicing. | blocked | `BINARY_SLICE`/`STORE_SLICE` deferred; no slice object kind. |
+| `sorted` | Return a new sorted list from an iterable. | in ROM | Bubble sort; `reverse=` via CALL_KW; numeric COMPARE_OP only; no `key=`. |
+| `staticmethod` | Transform a method into a static method. | blocked | Image-time `BI_STATICMETHOD` (id 0) unwrap; runtime wrapper blocked. |
+| `str` | Create a new string object from an object or buffer. | native | CALL on the seeded `str` `OBK_TYPE` (`OB_FLAG_STR_TYPE`): argc 0 → `""`; argc 1 `STR` identity, `INT` decimal `SHORT_STR` (≤15 chars), `BOOL`/`None` literals. Other tags / argc>1 → TYPE. |
+| `sum` | Return the sum of a start value and an iterable of numbers. | in ROM | `start=` via CALL_KW. Bad `+` / non-iterable → TYPE trap. |
+| `super` | Return a proxy object that delegates method calls to a parent or sibling class. | blocked | See `super.md`. |
+| `tuple` | Create a new tuple, optionally from an iterable. | in ROM | Empty `tuple()` + iterable via list materialize + `(*out,)`. Empty uses `iterable=None` default fill. |
+| `type` | Return the type of an object, or create a new type object. | in progress | One-arg: `obj.__class__`. Three-arg needs `LOAD_BUILD_CLASS`. |
+| `vars` | Return the __dict__ of an object, or locals() with no argument. | in progress | `obj.__dict__`; no-arg → `{}` (not real locals). |
+| `zip` | Iterate over several iterables in parallel, yielding tuples. | in ROM | Two iterables → **list** of pairs. LIST grow needs excore. |
+
+## pycore-specific helpers
+
+| Builtin | Description | Status | Notes |
+| --- | --- | --- | --- |
+| `from_bytes` | int.from_bytes-style constructor helper (pycore BI_FROM_BYTES). | blocked | Excore `PY_TRAP_BUILTIN_CALL`; no BYTES payload reader in Python. |
+| `to_bytes` | int.to_bytes-style conversion helper (pycore BI_TO_BYTES). | blocked | Excore path; needs BYTES allocation. |
+| `list_append` | list.append native method (index 0 in `ROM_NATIVE_METHODS`). | implemented | `lst += [value]` mirror; grow goes through the excore LIST_APPEND trap. |
+
+## ROM footprint
+
+ROM bodies are serialized without CPython's inline `CACHE` units
+(`image_from_source.strip_inline_caches`; jump args and exception tables are
+remapped to the hardware `pc + 1 + n_cache + arg` rule, the layout the
+on-device compiler emits). All ROM builtins and native methods together take
+~3.4k of the 8192 code-ROM slots (6.0k with caches); the largest bodies are
+`_float_from_str`, `_round_float` and `_scale`. The budget is tracked as
+`L-RT-4` in `pycore/docs/limitations.md`.
+
+## Source layout
+
+```text
+pycore_firmware/builtins/<name>.py      # one module per builtin
+pycore_firmware/builtins/<name>.md      # deep plans for blocked builtins
+pycore_firmware/builtins/builtins.md    # this inventory
+```
+
+| Kind | Count |
+| --- | --- |
+| Python modules | 73 |
+| Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`; `ord` / `chr` now shipped notes) |
+| Status: in ROM | 32 (incl. `print`, `exec`, `eval`, `compile`, `float`); plus 24 underscore helper entries (`_mulmod`, `_round_float`, `_float_from_str`, ...) that ROM bodies LOAD_GLOBAL |
+| Status: native | 5 (`ord`, `chr`, `int` CALL convert, `str` CALL convert, `complex`) |
+| Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
+| Status: in progress | 8 |
+| Status: blocked | 24 |
+
+### In ROM (seeded as CODE_OBJECT in boot builtins dict)
+
+Wave 1–2: `abs`, `all`, `any`, `bool`, `enumerate`, `map`, `sum`, `zip`  
+Wave 3: `bin`, `dict`, `divmod`, `filter`, `hex`, `list`, `min`, `oct`,
+`pow`, `reversed`, `round`, `sorted`, `tuple`  
+`float` (str parsing via `_bi_code_kind` dispatch)  
+Wave 4B: `delattr`, `getattr`, `hasattr`, `isinstance`, `issubclass`,
+`setattr`  
+`exec`, `eval` (precompiled `CODE_OBJECT` forms)  
+`compile` (T1 shim; `eval(compile("1 + 2", "<s>", "eval"))` → 3) 
+
+Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
+`img_firmware_wave3a`, `img_firmware_wave3_strings`, `img_firmware_wave3_pow`,
+`img_firmware_wave3_containers`, `img_firmware_sorted_kw`,
+`img_firmware_filter_pred`, `img_firmware_attr_helpers`,
+`img_firmware_isinstance`, `img_fw_pow_neg_mod`, `img_fw_pow_mulmod`,
+`img_fw_round_half_even`, `img_fw_float_str`. Attr specials: `img_attr_dunder_*`.
+
+### Native (hardware owns the builtins-dict CALL)
+
+`ord` (`BI_ORD`, id 10), `chr` (`BI_CHR`, id 11). No pure-Python body is
+possible: reading UTF-8 payload bytes as an integer and building a string from
+raw bytes are exactly the primitives Python lacks here. Both complete in one
+cycle with no dmem access, because a one-character string is
+always a `SHORT_STR` and its bytes are inline in the handle.
+
+`complex` (`BI_COMPLEX`, id 25) packs two binary64 values. `_bi_cabs`
+(`BI_CABS`, id 26) is the helper `abs` calls for a COMPLEX; it is not a
+public builtin. The hypot runs on the FPU (`PY_ALU_ABS`).
+
+`int` stays an `OBK_TYPE` (so `int.from_bytes` / `int.to_bytes` remain on
+`tp_dict`) with `OB_FLAG_INT_TYPE`. `CALL` converts: argc 0 → `0`; argc 1
+`INT`/`BOOL` identity or decimal `SHORT_STR`; other tags / `base=` → TYPE.
+
+`str` is an `OBK_TYPE` with `OB_FLAG_STR_TYPE`. `CALL` stringifies: argc 0
+→ `""`; argc 1 `STR` identity, `INT` decimal `SHORT_STR`, `BOOL`/`None`
+literals; other tags / argc>1 → TYPE.
+
+Coverage: `img_builtin_ord`, `img_builtin_chr`, `img_builtin_ord_unicode`
+(all four UTF-8 widths + `ord(chr(n))` round trip), `img_builtin_ord_scan`
+(`ord(s[i])` classification loop), `img_builtin_ord_len_trap`,
+`img_builtin_ord_type_trap`, `img_builtin_chr_range_trap`,
+`img_builtin_chr_surrogate_trap`, `img_builtin_int`,
+`img_builtin_int_type_trap`, `img_builtin_str`, `img_builtin_str_type_trap`.
+
+### Implemented (not yet seeded / hybrid docs)
+
+`len` (miss-path body; `BI_LEN` owns dict entry), `max`
+(BI_MAX), `range` (list-form body; `BI_RANGE` owns dict), `set` (Python
+form; `BI_SET` owns dict)
+
+### In progress (usable subset / hardware gaps)
+
+`callable`, `dir`, `format`, `iter`, `next`, `repr`,
+`type`, `vars`
+
+### Blocked (stub + notes/plans)
+
+`aiter`, `anext`, `ascii`, `breakpoint`, `bytearray`, `bytes`,
+`classmethod`, `frozenset`,
+`globals`, `hash`, `help`, `id`, `input`, `locals`, `memoryview`,
+`object`, `open`, `property`, `slice`, `staticmethod`,
+`super`, `from_bytes`, `to_bytes`
+
+## Blocked by bytecode (§3 gaps)
+
+Audit of **blocked** / partially-blocked names against
+`planning/master_plan.md` §4. Prefer linking deep plans under
+`pycore_firmware/builtins/*.md` where they exist.
+
+| Bytecode / protocol gap | Blocked or limited builtins |
+| --- | --- |
+| Kwargs ROM wrappers | `sorted(reverse=)` / `sum(start=)` / `print(sep=,end=)` in ROM; `max` stays `BI_MAX` |
+| `CO_VARARGS` / `CO_VARKEYWORDS` on defs | Multi-iter `zip(*args)` / `map` as Python `*args` parameters |
+| Exception tables / `RERAISE` | Real `TypeError` / `StopIteration` everywhere; comprehension option A/B |
+| `GET_ITER` / `FOR_ITER` on OBJECT | User-defined iterables (`__iter__` / `__next__`) |
+| ~~`BI_ORD` / `BI_CHR`~~ | **Done** — `ord` / `chr` are native (ids 10 / 11). `ascii` now only needs `repr` for str |
+| `LOAD_SUPER_ATTR` + descriptors | `super`, `property`, `classmethod` (see `super.md`, `property.md`) |
+| `COMPARE_OP` string ordering | `sorted` / `min` / `max` on str |
+| `FORMAT_*` / `BUILD_STRING` | Richer `format` / `str` / `print` |
+| Host `compile` / eval of source | **Done** — string-form `eval` / `exec` via `_bi_code_kind` (§11.1); `compile()` itself is in ROM |
+| I/O device | `open`, `input`, `print` (native `BI_PRINT` trap path; see `open.md`) |
+| Async opcodes | `aiter`, `anext` |
+| Buffer / frozenset / slice kinds | `memoryview`, `bytes`/`bytearray` payload, `frozenset`, `slice` |
+| Frame / hash exposure | `locals`, `globals`, `hash`, `id` |

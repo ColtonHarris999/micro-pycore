@@ -1,0 +1,222 @@
+name: All Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+    # `edited` is not in the default type set, so retargeting a stacked PR onto
+    # main did not start a run and the required `all-tests` check could never
+    # appear. Without it, a PR opened against another branch and later rebased
+    # onto main has no CI history at all.
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      force_hw:
+        description: Run hardware jobs even if the diff looks docs-only
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# PR updates cancel the previous run for that PR. Push and workflow_dispatch
+# on main must not: the post-merge run of 4d62c75 was cancelled in three
+# seconds when a second refs/heads/main event shared this group.
+# A title or body edit is also pull_request (`edited`). It must not cancel
+# the run a push just started, or that run's all-tests gate fails the
+# required check. Retargeting still cancels: the base ref actually changed.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref.from) }}
+
+jobs:
+  changes:
+    name: classify
+    # Title and body edits share the head SHA with the run already in
+    # progress. Queue behind it, then skip. Retargets fall through.
+    if: github.event.action != 'edited' || github.event.changes.base.ref.from
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+      hw: ${{ steps.filter.outputs.hw }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: filter
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force_hw }}" != "false" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "hw=true" >> "$GITHUB_OUTPUT"
+            echo "workflow_dispatch: running hardware jobs"
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            BASE="${{ github.event.before }}"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "hw=true" >> "$GITHUB_OUTPUT"
+            echo "no base SHA; running hardware jobs"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE" 2>/dev/null || true
+          FILES=$(git diff --name-only "$BASE"...HEAD || git diff --name-only "$BASE" HEAD)
+          echo "Changed files:"
+          echo "$FILES"
+          # Markdown, planning notes, and license/ignore files skip hardware.
+          # RTL, programs, tools, Makefile, Docker, and .github still run it.
+          HW_FILES=""
+          if [ -n "$FILES" ]; then
+            HW_FILES=$(echo "$FILES" | grep -Ev '\.(md|txt|rst)$|^planning/|^LICENSE$|^\.gitignore$|^\.gitattributes$' || true)
+          fi
+          if [ -z "$FILES" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "hw=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$HW_FILES" ]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            echo "hw=false" >> "$GITHUB_OUTPUT"
+            echo "docs/planning-only change; skipping hardware jobs"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "hw=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  docs:
+    name: docs
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Docs / planning only
+        run: |
+          echo "No RTL, programs, tools, Makefile, or workflow files changed."
+          echo "Hardware regression is skipped for this update."
+
+  # Every job is named for what it checks. TEST_JOBS is left to default to
+  # the runner's CPU count (see the Makefile).
+  host-tools:
+    name: host-tools
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: docker --version
+      - run: make docker-test-host
+
+  rtl-modules:
+    name: rtl-modules
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-test-rtl-modules
+
+  # Hardware tests, one job per area of pycore/programs/hw_tests.toml. Each
+  # runs the default memory config (CACHE_EN=1, MEM_LATENCY=4).
+  hardware:
+    name: ${{ matrix.area }}
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        area: [alu, strings, containers, control-flow, calls, objects,
+               variables, exceptions, builtins, memory, excore, compiler, gc]
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-test-${{ matrix.area }}
+
+  # The on-device compiler's own output: each program in
+  # pycore/programs/compile_suite/ is compiled on the hart, run on the hart,
+  # and compared with CPython 3.14 (pycore/tools/compile_suite.py). The area
+  # jobs test the hardware on CPython's bytecode; this one tests the
+  # firmware compiler's.
+  # Runner speed varies 3-4x between runs; on a slow one this job took 60
+  # minutes, so the timeout leaves room for that.
+  compiler-vs-cpython:
+    name: compiler-vs-cpython
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-test-compiler-vs-cpython
+
+  # The memory-system gate (memory_system_plan.md §6). The area jobs run one
+  # configuration; this one runs the others: cache off at latency 1, 4 and
+  # 30, and cache on at latency 30. A cache that changes a retired result,
+  # or a master that assumed single-cycle memory, fails only here -- the
+  # L2-to-RAM writeback bug fixed in #101 was invisible because CI never ran
+  # a second configuration. Each image is built once and reused across the
+  # four configs; see pycore/tools/hw_tests.py for which tests run where.
+  caching:
+    name: caching
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-test-caching
+
+  # Keep this job id/name so existing branch protection on "all-tests" still
+  # matches. It is a gate over the path-filtered jobs, not a 3h monolith.
+  all-tests:
+    name: all-tests
+    needs: [changes, docs, host-tools, rtl-modules, hardware, compiler-vs-cpython, caching]
+    # always() so a failed or skipped dependency still reaches this gate.
+    # !cancelled() so a run superseded by concurrency is skipped instead of
+    # failing the required check. A title or body edit has no new code; the
+    # require step is skipped and this job stays green for the same SHA.
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job that ran
+        if: github.event.action != 'edited' || github.event.changes.base.ref.from
+        run: |
+          set -euo pipefail
+          echo "docs_only=${{ needs.changes.outputs.docs_only }}"
+          echo "hw=${{ needs.changes.outputs.hw }}"
+          RESULTS='${{ toJSON(needs) }}'
+          echo "$RESULTS"
+
+          # Classification decides which jobs run, so it must succeed outright.
+          test "${{ needs.changes.result }}" = "success"
+
+          # Any job that ran must have passed. Checking for bad outcomes rather
+          # than listing good ones means a newly added job is gated the moment
+          # it appears in `needs` -- a hardcoded allow-list silently stops
+          # gating whenever someone adds a job and forgets this block.
+          if echo "$RESULTS" | grep -qE '"result": *"(failure|cancelled|timed_out)"'; then
+            echo "::error::one or more required jobs did not pass"
+            exit 1
+          fi
+
+          # Guard against a classify bug that skips everything and looks green.
+          if [ "${{ needs.changes.outputs.docs_only }}" = "true" ]; then
+            test "${{ needs.docs.result }}" = "success"
+          else
+            for r in "${{ needs.host-tools.result }}" "${{ needs.rtl-modules.result }}" \
+                     "${{ needs.hardware.result }}" "${{ needs.compiler-vs-cpython.result }}" \
+                     "${{ needs.caching.result }}"; do
+              test "$r" = "success"
+            done
+          fi
