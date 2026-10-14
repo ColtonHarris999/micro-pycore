@@ -1,6 +1,7 @@
 # MicroPython microcontroller core
 
 Status: **plan, not started.** Audit snapshot: [pycore](https://github.com/ColtonHarris999/pycore) `main` @ `371dc007f9`, 2026-10-13.
+Review: [findings](#review-findings) against MicroPython `v1.29.0`, 2026-10-14. Those findings are open. Where one disagrees with a phase bullet, the finding wins until a later revision of the locks accepts or rejects it.
 
 This file moved here from pycore branch `cursor/micropython-mcu-plan-3b27`
 (`bbcd1d9328`). This repository is the sibling tree that plan calls
@@ -139,13 +140,20 @@ exact opcode numbers and bit-masks are not, so they are read from the tag
 rather than written here.
 
 - **Bytecode** is a variable-length byte stream. The first byte is the
-  opcode. Small immediates are folded into the opcode by the multi-opcode
-  scheme. Larger operands follow as trailing bytes. A function body starts
-  with a prelude: state size, exception-stack size, flags, then the bytes.
-  The persistent file is `.mpy`. There is no `CACHE` opcode and no
-  `EXTENDED_ARG` word.
+  opcode. Some opcodes fold a small immediate into the opcode byte (the
+  multi-opcode ranges). Every other operand is a variable-length unsigned
+  integer, a relative jump, or a qstr index into that module's table. A
+  function body starts with the bit-interleaved prelude in the tag's
+  `py/bc.h`: stack depth, exception-stack depth, scope flags, argument
+  counts, then source-info and closure-cell bytes, then the opcodes. The
+  first opcode is not at a fixed offset. The persistent file is `.mpy`.
+  There is no `CACHE` opcode and no `EXTENDED_ARG` word. v6 bytecode is
+  not rewritten at run time. Finding F2 is the loader contract.
 - **Names** are qstrs, integer indexes into a pool of interned strings.
-  Globals and attributes key on qstr.
+  Globals and attributes key on qstr. A bytecode operand is an index into
+  the module's qstr table, not a global id and not a pointer. Static ids
+  at or below the tag's `QSTR_LAST_STATIC` are shared with `mpy-cross`
+  and are stored as ids, not as text.
 - **The object word** on a 32-bit port is `MICROPY_OBJ_REPR_A` in
   `py/obj.h`: a small int, a qstr, a handful of immediates (`None`,
   `False`, `True`), or a pointer to a heap object. v1 copies that encoding.
@@ -155,8 +163,8 @@ rather than written here.
   Strings are UTF-8. Identifiers are qstrs; other strings are heap objects.
 - **GC is always on.** Allocation failure collects. The collector is
   mark-sweep over one heap, with a side table of per-block state. Roots
-  are explicit on this core (the SRAM stack, globals, and the few live
-  machine registers).
+  are explicit on this core. Finding F4 is the root set and the stall
+  rule. The C VM does not abort an opcode and re-dispatch it.
 - **Libraries are frozen modules** in flash. `import` loads a frozen
   `.mpy`. The on-device compiler is a build option and is large; v1
   leaves it out. The host cross-compiler is the toolchain.
@@ -164,8 +172,10 @@ rather than written here.
   v1 builds UART, GPIO, and one timer. SPI and I2C wait until a program
   needs them.
 - **Interrupts** do not run arbitrary Python inside the latch. A pending
-  IRQ is observed at a bytecode boundary. `micropython.schedule` runs a
-  frozen callback there. The latch path does not allocate.
+  IRQ is latched in the peripheral block. `micropython.schedule` queues a
+  callback for the VM's pending check. The latch path does not allocate.
+  Finding F6 is the queue depth, the callback argument, and the fact that
+  the callback itself may allocate.
 - **Concurrency** in the ecosystem is cooperative (`asyncio`). Threads are
   out of v1. Generators and `async` change the frame layout, so they are
   their own later phase.
@@ -190,6 +200,11 @@ RTL tweak.
 | Interrupts | Latched in the peripheral block. Handled at dispatch. One schedule queue of frozen callbacks |
 | Compiler on device | Absent |
 | Success metric | Stdout matches the unix port. Cycle counts are recorded. They are not a ratio against CPython |
+
+Finding F4 replaces the GC row's "abort, then re-dispatch" with a stall
+inside the allocating opcode. The row stays so the original choice remains
+visible. Finding F1 replaces "the unix port" with a 32-bit build of that
+port configured like v1.
 
 ### Memory map
 
@@ -274,8 +289,9 @@ Docs, catalog, submodule. No RTL.
   does not edit that file and does not delete CPython tracks.
 
 **Exit.** `mpycore.json` round-trips a unit test that checks the recorded
-`.mpy` version against the submodule headers. `make` of the CPython hart
-is untouched.
+`.mpy` version against the submodule headers. Phase 0 does not edit
+pycore. Finding F8 is part of this exit. The CPython hart's `make` is
+not a check this repository can run.
 
 ### Phase 1 — Flash image and oracle harness
 
@@ -420,10 +436,11 @@ a source of `mpycore` tasks.
 - **Roots.** MicroPython's C port scans a C stack. This core has an
   explicit root set. Writing that set down in phase 3, before the engine,
   is what keeps the collector from freeing an object the unix port still
-  holds, and from retaining an object the unix port would free only when
-  the test is a stdout test. Stdout tests do not catch a missed root that
-  happens to survive until halt; phase 3 includes one test that allocates
-  past a dropped reference and checks that a later allocation succeeds.
+  holds. Stdout tests do not catch a missed root that happens to survive
+  until halt; phase 3 includes one test that allocates past a dropped
+  reference and checks that a later allocation succeeds. Finding F4
+  extends that root set to every live frame, the exception stack, the
+  builtins dict, and the schedule queue, and it drops opcode re-dispatch.
 - **256 KB will not hold the current on-device compiler.** That is the
   point of leaving it on the CPython hart. Phase 6's compiler, if it
   happens, has to fit in flash and use the 256 KB heap.
@@ -434,25 +451,350 @@ a source of `mpycore` tasks.
   entries and the 16 MB heap pointer. The new FSM is new RTL that follows
   the written rule.
 
+## Review findings
+
+Reviewed 2026-10-14 against MicroPython `v1.29.0` (`py/bc.h`, `py/bc0.h`,
+`py/obj.h`, `py/persistentcode.c`, `py/vm.c`, `py/gc.c`, `py/objfun.c`,
+`py/objlist.c`, `py/runtime.c`, `py/smallint.c`, `py/modbuiltins.c`,
+`py/scheduler.c`, `ports/unix`, `mpy-cross`). This plan has not pinned a
+tag. The citations are the current stable line, so phase 0 still has to
+read them from whatever tag it pins. Nothing here copies an opcode number
+or an object mask into the catalog.
+
+### F1. The oracle is a configured 32-bit build, not a default unix port
+
+`ports/unix` on a 64-bit host uses `MICROPY_OBJ_REPR_A` in a 64-bit word,
+so small ints are 63 bits. `ports/unix/variants/mpconfigvariant_common.h`
+defaults float to IEEE binary64 and long ints to `MICROPY_LONGINT_IMPL_MPZ`.
+`ports/unix/main.c` sets the default heap to `1MB * sizeof(mp_uint_t) / 4`,
+which is 2MB on that host. Finalisers are on. `MICROPY_ENABLE_PYSTACK` is
+off, so the Python stack is the C stack and is not part of the GC heap.
+Unhandled exceptions go to stderr (`MICROPY_ERROR_PRINTER`).
+`sys.platform` is `linux`.
+
+`print(1 + 2)` matches that binary. A program that overflows 31 bits,
+divides with `/`, prints a traceback, or exhausts memory does not. The
+phase 2 exit test does not catch the mismatch.
+
+`mpy-cross` already defaults to 31-bit small ints and to bytecode-only
+(`mpy-cross/main.c`: `small_int_bits = 31`, native arch none unless
+`-march` is passed). The same binary still has double and mpz turned on,
+and `MICROPY_COMP_CONST_FOLDING` folds numeric expressions in
+`py/parse.c` (`fold_constants` covers `+ - * / % //` and `**`). A folded
+`1 / 2` or `2 ** 40` is stored as `MP_PERSISTENT_OBJ_FLOAT` or
+`MP_PERSISTENT_OBJ_INT`. The image tool rejects those encodings in v1,
+and the unix oracle is built so that it rejects the same source.
+
+Phase 0 records one config fragment and uses it three ways.
+
+- `mpy-cross` flags: `-msmall-int-bits=31`, no `-march`.
+- Unix oracle: `mp_int_t` is 32 bits, long int none, float none, complex
+  none, finalisers off, one pinned `MICROPY_ERROR_REPORTING`, one pinned
+  scheduler depth. v1.29 has no 32-bit `REPR_A` that runs in a 64-bit
+  process. `REPR_C` requires float. The oracle is a 32-bit compile, not
+  `make` in `ports/unix`.
+- RTL: the same integer width, the same rejected const kinds, the same
+  error strings. With long ints disabled, overflow text is
+  `small int overflow` (`py/objint.c`). Terse and detailed reporting do
+  not share strings.
+
+The harness compares stdout and stderr separately. Tracebacks are not
+stdout. Programs under test do not print `sys.platform` or
+`sys.implementation` unless those strings are pinned to the same values
+on both sides.
+
+### F2. `.mpy` is a container, and bytecode operands are indices
+
+Execute-in-place fits v6 bytecode. The bytes are not patched at run time.
+The old map-cache flag is gone from the v6 header. Mapping a raw `.mpy`
+file in as the instruction stream does not.
+
+The file is a header (`M`, version, feature/arch byte, small-int bits),
+an optional architecture-flags vuint, one qstr table, one const-object
+table, then a tree of raw-code objects (`py/persistentcode.c`). Each raw
+code can have children. A class body (`SCOPE_CLASS` in `py/compile.c`),
+a nested `def`, and a comprehension (`SCOPE_LIST_COMP`) are children, not
+more bytes in the parent. Phase 1's "qstr pool, immediate consts, raw
+bytecode" drops the per-module tables and the child tree. Phase 4's
+second module is a second `.mpy` with its own tables.
+
+When persistent code is enabled, `MICROPY_EMIT_BYTECODE_USES_QSTR_TABLE`
+is on and `DECODE_QSTR` in `py/vm.c` indexes the module's `qstr_table`.
+`LOAD_CONST_OBJ` indexes `obj_table`. `MAKE_FUNCTION` indexes
+`child_table`. Static qstrs at or below `QSTR_LAST_STATIC`
+(`MP_QSTR_zip` in v1.29) are stored as ids, not as UTF-8. The image ships
+the tag's static pool from `makeqstrdata.py` at those ids. `print` is
+resolved through that pool.
+
+The prelude is not three integers in front of the opcodes. `py/bc.h`
+interleaves `n_state - 1`, `n_exc_stack`, four scope flags, `n_pos_args`,
+`n_kwonly_args`, and `n_def_pos_args` into one vuint, then interleaves
+source-info size and closure-cell count into a second vuint, then the
+source-info bytes (function name, argument names, line numbers) and one
+byte per cell. A decoder that stops at "state size, exception-stack size,
+flags" fetches source info as code. Phase 4 tracebacks need the
+line-number bytes. The scope flags that change the call sequence are
+`MP_SCOPE_FLAG_VARARGS`, `MP_SCOPE_FLAG_VARKEYWORDS`, and
+`MP_SCOPE_FLAG_DEFKWARGS` (`py/runtime0.h`). No phase owns them.
+
+Const tags the image tool accepts or rejects explicitly: `None`, `False`,
+`True`, ellipsis, str, bytes, int, float, complex, tuple, and, for native
+files, the fun table. Ellipsis, `()`, and `b''` are ROM singletons, not
+immediates (`py/obj.h`). v1 rejects float, complex, a non-small int, and
+any raw code whose kind is not bytecode, including a header whose arch
+byte is not `MP_NATIVE_ARCH_NONE`. `@micropython.native`, viper, and
+inline asm are that reject, not a silent fall-through.
+
+`MP_OBJ_NULL` is the word 0, and `MP_OBJ_SENTINEL` is the word 4, unless
+the debug sentinels are on (`py/obj.h`). Unbound locals, `LOAD_NULL` (the
+stack value that means "not a method"), and `MP_OBJ_STOP_ITERATION` are
+this zero word. A ROM object cannot sit at flash address 0 or 4. The GC
+does not trace a zero word. Under `MICROPY_OBJ_IMMEDIATE_OBJS`, `True` is
+not the immediate after `False` (v1.29 uses immediate ids 0, 1, and 3).
+Phase 0 copies the three ids from the tag instead of assuming they are
+dense.
+
+### F3. The machine is a stack frame, not a stack pointer next to a register file
+
+Locals and the expression stack are one array of `n_state` object words.
+Local 0 is `state[n_state - 1]`. The stack pointer starts at `state - 1`
+and grows upward (`mp_setup_code_state` in `py/bc.c`). The exception
+stack is a second array of `mp_exc_stack_t` after those words: a bytecode
+address, a tagged value-stack pointer (bit 1 marks `setup_with` /
+`setup_finally`), and the previous exception. It is not an array of
+object words. `objfun.c` sizes the variable part as
+`n_state * sizeof(mp_obj_t) + n_exc_stack * sizeof(mp_exc_stack_t)`, plus
+the code-state header (function, ip, sp, depths, globals).
+
+Jump offsets apply after the offset bytes have been consumed
+(`DECODE_SLABEL` / `DECODE_ULABEL`, then `ip += offset`). `UNWIND_JUMP`
+carries an extra byte after the offset. `CALL_FUNCTION`'s varuint packs
+the positional count in the low 8 bits and the keyword count in the next
+8 (`py/vm.c`).
+
+Phase 0's catalog is not implementable as a list of family names. Each
+opcode needs the operand format from `py/bc0.h`, the multi-opcode
+immediate if it has one, the stack effect, and a v1 disposition.
+
+`MAKE_FUNCTION` allocates a function object at run time even when the raw
+code is in flash. Phase 2 excludes heap allocation. Its counted-loop exit
+test allocates anyway if the loop is written with `def`. A module-level
+`while` uses `STORE_NAME` on the module dict instead. `print` is not an
+entry in that dict. `LOAD_GLOBAL` finds `mp_builtin_print` in the builtins
+dict (`py/modbuiltins.c`). That builtin writes the decimal text of each
+argument, then `sep`, then `end` (`\n` by default), and returns `None`,
+which the caller pops. A UART store of the integer is not `print`.
+
+`mpy-cross` folds `1 + 2` to the constant 3. `print(1 + 2)` does not
+execute the ALU. The counted loop has to be a `while` on a local or a
+global. It is not a `for` over `range`: `GET_ITER`, `FOR_ITER`, and the
+`range` type are outside phase 2. It is not a comprehension: a
+comprehension is a child raw code.
+
+No phase owns default arguments (`MAKE_FUNCTION_DEFARGS`), keyword calls,
+`*args` / `**kwargs`, closures (`LOAD_DEREF`, cells, `MAKE_CLOSURE`), or
+comprehensions. Closures are also absent from phase 6. A timer callback
+written as a nested `def` or a `lambda` needs them. v1 either restricts
+scheduled callbacks to module-level functions, or it grows a phase for
+closures before phase 5 promises those callbacks.
+
+### F4. Abort-and-redispatch does not fit this bytecode, and 256 KB is not one heap
+
+The C VM collects inside `gc_alloc` (`py/gc.c`), which opcodes call after
+they have already pushed, popped, or written. It does not roll the opcode
+back and run it again. List append doubles a full item array (`alloc * 2`
+in `py/objlist.c`). Extend grows by `len + extra + 4`. The minimum
+allocation is 4 slots. The list object and the item array are separate
+heap objects. A restartable opcode would have to leave the stack and the
+heap unchanged until every allocation succeeded. `BUILD_*`, `CALL_*`,
+`MAKE_FUNCTION`, and `SETUP_WITH` do not have that shape.
+
+Keep the safe point. Replace "abort the opcode and re-dispatch" with a
+stall inside the opcode. Roots at that stall are: every live frame's
+`state[0:n_state]`, the exception stack's `prev_exc` and the objects
+still covered by the tagged `val_sp`, module globals, the builtins dict,
+the schedule queue, and any object word held in the FSM. Collect, then
+retry the allocation. Do not retry the opcode. Words outside the GC pool
+are not marked, including flash ROM objects and the zero word.
+`VERIFY_PTR` is that range check. Frozen constants must not point from
+ROM at a RAM object. Nothing else would keep that RAM object alive.
+
+The 256 KB window cannot stay one region if `MemoryError` is supposed to
+agree with `-X heapsize=`.
+
+| Region | Unix port | This plan today |
+| --- | --- | --- |
+| GC pool, including the 2-bit alloc table | the `-X heapsize=` bytes, tables inside the pool | lumped into 256 KB with the stacks |
+| Python frames | C stack, unless pystack is enabled | lumped into the same 256 KB |
+| Emergency exception | `mp_emergency_exception_obj`, plus a buffer when enabled | not in the map |
+| Mark stack | `MICROPY_ALLOC_GC_STACK_SIZE` | not in the map |
+
+On a 32-bit build a GC block is 16 bytes (`MICROPY_BYTES_PER_GC_BLOCK`).
+The alloc table is two bits per block and sits at the front of the pool.
+The unix port's finaliser table shrinks the pool further. v1 has no
+`__del__`, so the oracle builds with finalisers off. Otherwise the two
+heaps fail on different programs.
+
+Phase 3 currently requires both of these: heap layout may differ from
+MicroPython's C structs, and `MemoryError` is raised the way the unix port
+raises it at the same size. Header size, list overallocation, and the
+alloc table pick the byte where allocation fails. Dict printing is the
+same kind of leak. A normal dict is a hash map. `mp_map_init` clears
+`is_ordered`, and `dict_print` walks slots. `print(d)` matches only when
+the hash, the growth rule, and the qstr-key path match, or when the tests
+never print a dict and never iterate one.
+
+Use the unix port as the stdout oracle for values. For memory, put an
+explicit GC pool in the map, run the oracle with `-X heapsize` equal to
+that pool, and enable `MICROPY_ENABLE_PYSTACK` at the frame region's size.
+The phase 3 tests stay coarse. A dropped reference can be allocated again.
+A program that retains much more than the pool raises `MemoryError`. The
+tests do not require the same failing allocation. Reserve a preallocated
+emergency `MemoryError` so the failure path does not itself allocate.
+`objfun.c` turns a failed frame allocation into
+`RuntimeError: maximum recursion depth exceeded` rather than
+`MemoryError`. The core does the same, or a recursion test will not match.
+
+Small-int arithmetic is the `MP_SMALL_INT_FITS` check in `py/smallint.h`
+after the operation, not a 31-bit wrap. Unary minus and abs of the minimum
+small int overflow. Floor division and modulo go through
+`mp_small_int_floor_divide` and `mp_small_int_modulo`
+(`py/smallint.c`: the remainder takes the sign of the divisor). A negative
+shift raises `ValueError`. Power is a loop that can overflow. True
+division is absent from the small-int switch when float is off, and it
+then fails as an unsupported operator. In-place ops on small ints are the
+same arithmetic. The disposition table brings add, sub, and compare
+across. Phase 2's "binary arithmetic" is this wider set.
+
+### F5. Phase 4 is several runtimes, and one program does not lock them
+
+`LOAD_BUILD_CLASS` pushes `mp_builtin___build_class__` (`py/modbuiltins.c`).
+That builtin calls the class-body function, then calls
+`type(name, bases, locals)`. The opcode is one byte. The class
+implementation is `type` plus the body call. A body that captures
+`__class__` returns a cell, which is a closure. A class with one base, an
+`__init__`, and a method that does not use `super()` does not need that
+cell. Multiple inheritance, `super()` (`LOAD_SUPER_METHOD`), and
+metaclasses are not part of the exit test, and they are not named as out
+of scope. Name them out of scope, or the phase has no edge.
+
+`with` is `SETUP_WITH` and `WITH_CLEANUP` in `py/vm.c`. The VM calls
+`__enter__`, keeps `__exit__` and the context manager on the stack, and
+later calls `__exit__` with the exception triple. A true result swallows
+the exception. `return` inside `with` or `finally` uses `UNWIND_JUMP` to
+run handlers that are not active yet. A program that only checks that
+both methods ran leaves that protocol untested. The exit program takes
+the normal path and the exception path, including an `__exit__` that
+swallows.
+
+`import` is `IMPORT_NAME`, `IMPORT_FROM`, and `IMPORT_STAR`, a
+`sys.modules` entry so the body runs once, and `__name__` (`__main__` on
+the entry module, the module's name on the other). Relative imports need
+a package. v1 rejects them. The entry point, the flash table of frozen
+modules, and a clean return from the entry module are unspecified. A
+`while True` program does not return. Device tests need a cycle limit or
+a halt write.
+
+Exception objects allocate. The type list in phase 4 is the right list,
+and it depends on the emergency object from F4. Line numbers come from
+the prelude. Phase 2 has no exception path, so its programs do not divide
+by zero. Phase 4 is where that result becomes `ZeroDivisionError`.
+
+`set`, `slice`, and `bytearray` are how MCU code builds buffers and
+views. `BUILD_SET` and `BUILD_SLICE` exist. No phase mentions them. v1
+should say they wait.
+
+### F6. Phase 5 has a register map and no Python binding
+
+A frozen program cannot store to `0x4000_0000` unless a builtin does.
+The target-runtime section names `machine.Pin`, `machine.UART`, and
+`machine.Timer`. Phase 5 then lists registers and a blink program that
+toggles `GPIO_OUT`. Those are not yet one feature. Phase 5 names the
+constructors, the constants (`Pin.OUT`), and the methods that perform the
+accesses (`Pin.value`, `UART.read` / `UART.write`, `Timer.init`), and it
+says whether `machine.mem32` exists. The unix port's `machine` module is
+not this map. Edge checks use a host model of these registers. That model
+is written into `mpycore/docs/peripherals.md` before the RTL, the same
+order `gc.md` has before the collector.
+
+The register table is not yet that model. `UART_RX` does not say whether
+a read pops the byte, what a read returns when bit 31 is clear, or what
+an overrun does. `TIMER_COUNT` is both a free-running counter and a
+compare reload, with no clock, no auto-reload rule, and no level-versus-edge
+rule for the IRQ. `GPIO_OUT` has no input and no direction. That is a
+blink output. It is not a GPIO peripheral.
+
+The IRQ rule also diverges from the runtime the oracle implements.
+`micropython.schedule(function, arg)` in `py/scheduler.c` queues one call
+with one argument. `MICROPY_SCHEDULER_DEPTH` defaults to 4 and has to be a
+power of two. A full queue raises `RuntimeError: schedule queue full`.
+The VM inspects the queue on branch opcodes (`pending_exception_check` in
+`py/vm.c`), not on every byte. A native builtin that loops without calling
+the pending check starves the queue. Hard-IRQ context locks the GC, and
+`gc_alloc` returns NULL while that lock is held. The scheduled callback
+itself is ordinary Python and may allocate. Forbidding allocation inside
+the callback rejects a handler that appends to a list, and it will not
+match the unix port.
+
+v1 keeps the latch non-allocating, enqueues a module-level function plus
+one argument, and runs that callback as a normal call. The callback may
+allocate. It does not nest. `KeyboardInterrupt` as a pending exception is
+a different path and is unspecified. A later REPL needs it. It is not
+part of the phase 5 exit.
+
+### F7. This repository does not contain the CPython hart
+
+The plan was written inside pycore and then moved. Its test contract
+originally named `make test-host`, `make test-hw`,
+`make test-compiler-vs-cpython`, and `make test-caching`, and a CI split
+that skips hardware jobs when a PR only touches markdown. Those jobs are
+not in this tree. Phase 0's original exit, "the CPython `make` is
+untouched," is not a check this repository can run. The test contract and
+the phase 0 exit below are updated to match. This repo's CI grows the
+phase exit the plan already names, starting with the first PR that adds
+a simulator. Keeping the CPython hart green remains a rule for changes
+that land in pycore.
+
+The Verilator flow this plan reuses is in that other tree too. Phase 2's
+exit assumes a simulator that loads flash, captures `UART_TX`, prints a
+cycle count, and stops a runaway. That harness is part of phase 2.
+
+### F8. Add these checks to the phase exits
+
+These do not add phases. A single happy-path program will not catch them.
+
+| Phase | Add to the exit |
+| --- | --- |
+| 0 | The config fragment and `mpy-cross` flags from F1. Static qstr id of `print`. Operand format and stack effect per opcode. Immediate ids for `None`, `False`, and `True`. A reject list for native code, float, complex, and non-small int constants. |
+| 1 | Decode past source info to the first opcode. One child raw code. Per-module qstr and const tables. A mismatched header is an error. Show that folded `1 + 2` is a constant, so it is not later used as the ALU test. |
+| 2 | A `while` whose add is not a constant fold. A positional call that uses the return value. `print` of a negative small int, including the newline byte. No divide-by-zero. |
+| 3 | A dropped reference can be allocated again. Data retained well past the pool raises `MemoryError` through the emergency object. Dict print is either locked to MicroPython's map or left out of the oracle. |
+| 4 | One base class with `__init__` and a method. `with` on the success path and on a swallowed exception. `import` runs the second module once and sets `__name__`. An unhandled exception writes a traceback to `UART_TX` and halts with a reason distinct from a clean return. |
+| 5 | Named `machine` calls, not a bare store. RX-pop and timer-match rules in `peripherals.md` before RTL. The callback takes one argument, may allocate, and does not nest. A full schedule queue raises `RuntimeError`. |
+
 ## Test contract
 
 - **Host.** Image tool and prelude decoder under `mpycore/`. No Verilator.
-  The CPython `make test-host` job stays as it is. A docs-only change to
-  this plan does not run it.
+  A docs-only change to this plan does not add a simulator job. The
+  CPython `make test-host` job is a pycore job. It is not in this
+  repository. See finding F7.
 - **Device.** One shared `mpycore` simulator. Programs under
   `mpycore/programs/`. Each exit test in phases 2–5 is a named program
   whose stdout (and, in phase 5, peripheral trace) is checked.
-- **Oracle binary.** The pinned unix port, invoked by the harness with a
-  heap limit of 256 KB from phase 3 onward.
+- **Oracle binary.** The pinned unix port, built as the 32-bit v1 config
+  in finding F1. From phase 3 onward the harness passes `-X heapsize`
+  equal to the GC pool in the memory map, not the whole SRAM window.
+  Finding F4 splits that window.
 - **CPython suite.** `make test-hw`, `make test-compiler-vs-cpython`, and
-  `make test-caching` remain the CPython hart's gates. `mpycore` work does
-  not weaken them. v1 has no cache, so the CPython caching gate is not a
+  `make test-caching` are gates of the pycore repository. This repository
+  does not run them, and `mpycore` work does not weaken them by editing
+  that tree. v1 has no cache, so the CPython caching gate is not an
   `mpycore` gate. The `mpycore` memory gate is: SRAM latency fixed at 1,
   flash wait-state 1, and the phase exit programs match.
-- **CI.** Follow the existing split: a PR that touches only `planning/`
-  and markdown skips the hardware jobs. The first PR that adds
-  `mpycore/rtl` or a simulator adds a job for the phase's exit test and
-  does not rebuild the CPython simulators to do it.
+- **CI.** This repository starts without hardware jobs. The first PR that
+  adds `mpycore/rtl` or a simulator adds a job for the phase's exit test.
+  That job does not build the CPython hart. A PR that only touches
+  `planning/` and markdown does not add one.
 
 ## Doc contract
 
