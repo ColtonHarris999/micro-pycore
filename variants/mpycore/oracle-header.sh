@@ -5,7 +5,9 @@
 # a bytecode-only file does not carry it.
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+# $0 may be a symlink installed on PATH (the oracle image does this).
+SCRIPT_PATH=$(readlink -f "$0")
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
 ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 MPY_CROSS=${MPY_CROSS:-$ROOT/build/oracle/src/mpy-cross/build/mpy-cross}
