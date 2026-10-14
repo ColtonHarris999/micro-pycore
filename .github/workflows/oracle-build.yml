@@ -1,0 +1,60 @@
+name: Oracle build
+
+# Cached image for the pinned MicroPython unix oracle and mpy-cross.
+# goldens-fresh is the later gating job; this one builds the tools.
+# No schedule: the GC nightly stays manual, and this job is not a soak.
+on:
+  pull_request:
+    paths:
+      - "vendor/**"
+      - "variants/**"
+      - "Dockerfile.oracle"
+      - "Makefile"
+      - ".github/workflows/oracle-build.yml"
+  push:
+    branches:
+      - main
+      - mpy_translation
+    paths:
+      - "vendor/**"
+      - "variants/**"
+      - "Dockerfile.oracle"
+      - "Makefile"
+      - ".github/workflows/oracle-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Layer cache writes use the Actions cache API.
+  actions: write
+
+concurrency:
+  group: oracle-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oracle-build:
+    name: oracle-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.oracle
+          load: true
+          tags: upycore-oracle:local
+          cache-from: type=gha,scope=upycore-oracle
+          cache-to: type=gha,scope=upycore-oracle,mode=max
+
+      - name: Bytecode header
+        run: docker run --rm upycore-oracle:local
+
+      - name: Variant smoke
+        run: docker run --rm --entrypoint oracle-smoke upycore-oracle:local
