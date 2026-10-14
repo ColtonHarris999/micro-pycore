@@ -527,7 +527,7 @@ def link(main: Path, modules: list[tuple[str, Path, bool]], fw: Path, out: Path,
     # Type objects: allocate now, fill once dicts exist.
     for tname in abi.TYPES:
         img.symbols[f"type:{tname}"] = img.alloc(abi.OBJ_WORDS["TYPE"])
-        img.set(abi.TYPE_TABLE_BASE + 4 * abi.TYPE_ID[tname], img.symbols[f"type:{tname}"])
+        img.set(abi.TYPE_TABLE_BASE + 4 * abi.TYPE_ID[tname], type_val(img, tname))
     img.set(img.symbols["ellipsis"], (T["INT"], abi.OB["ELLIPSIS"]))
     img.set(img.symbols["ellipsis"] + 4, type_val(img, "ellipsis"))
     img.set(img.symbols["notimpl"], (T["INT"], abi.OB["NOTIMPL"]))
@@ -656,6 +656,7 @@ def link(main: Path, modules: list[tuple[str, Path, bool]], fw: Path, out: Path,
     # Firmware frames may hold NULL in a local; this global is how the
     # firmware spells it.
     fw_items["NULL"] = NULL
+    fw_items["STOP"] = (T["CONTROL"], abi.CTL["STOP"])
 
     # Frozen user modules.
     frozen = emit_dict(img, [(img.qval(m.name), (T["INT"], m.md_addr)) for m in user_mods])
