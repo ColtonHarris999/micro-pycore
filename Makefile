@@ -12,6 +12,9 @@ DOCKER_CONTAINER_WORKDIR ?= /work
 DOCKER_BUILD_FLAGS ?=
 DOCKER_RUN_FLAGS ?=
 
+# MicroPython v1.29.0 oracle (variants/mpycore). mpy-cross is invoked with
+# -msmall-int-bits=31, no -march, and -O0. The unix variant is 32-bit.
+
 PYCORE_CACHE_EN ?= 1
 # CI default is 4 once the RAM model exists (P2); 1-cycle banks ignore it.
 PYCORE_MEM_LATENCY ?= 4
@@ -129,7 +132,8 @@ EXCORE_RTL_SRCS := \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
 	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
-	research-compare research-compare-machines
+	research-compare research-compare-machines \
+	oracle oracle-header oracle-variant oracle-smoke
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -841,6 +845,19 @@ docker-test-%: docker-build
 # pycore-gc-fuzz.
 docker-pycore-gc-fuzz: docker-build
 	$(DOCKER_MAKE) make pycore-gc-fuzz SEEDS=$(SEEDS) TOP=$(TOP) TEST_JOBS=$(TEST_JOBS)
+
+# Host oracle. `make oracle-header` prints `header: 4d 06 00 1f` for a
+# bytecode-only compile. `make oracle` also builds and smokes the variant.
+oracle-header:
+	variants/mpycore/build.sh header
+
+oracle-variant:
+	variants/mpycore/build.sh variant
+
+oracle-smoke:
+	variants/mpycore/build.sh smoke
+
+oracle: oracle-header oracle-smoke
 
 clean:
 	rm -rf $(BUILD_DIR)
