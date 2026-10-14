@@ -216,11 +216,11 @@ and its tag.
 | `0111` | SHORT_STR | 4 | Length in the first payload's low byte, then up to 15 bytes across this register and three `CONT` registers |
 | `1000` | STR | 1 | Pointer to a long string. Length, hash, and bytes are in the object |
 | `1001` | TUPLE | 1 | Pointer |
-| `1010` | LIST | 1 | Pointer |
-| `1011` | DICT | 1 | Pointer |
-| `1100` | SET | 1 | Pointer |
-| `1101` | BYTES | 1 | Pointer. The header distinguishes `bytes` and `bytearray` |
-| `1110` | OBJECT | 1 | Pointer. The header distinguishes function, module, type, instance, range, iterator, and exception |
+| `1010` | MUT_COLLEC | 1 | Pointer. Low 2 bits are `0` list, `1` dict, `2` set, `3` bytearray. The address clears those bits |
+| `1011` | RANGE | 1 | Pointer to start, stop, step |
+| `1100` | ITER | 1 | Pointer to the iterable and the index |
+| `1101` | BYTES | 1 | Pointer to an immutable `bytes` |
+| `1110` | OBJECT | 1 | Pointer. The first memory word distinguishes function, module, type, instance, method, exception, and cell |
 | `1111` | CONT | 1 | Second or later register of INT64, COMPLEX, or SHORT_STR |
 
 `n_state` counts Python values. Call setup expands INT64 and COMPLEX to
@@ -231,7 +231,8 @@ bytes. A longer string is STR.
 
 The collector reads nibble `i` before it follows the word at
 `data_base + 4*i`. CONTROL, INT, INT64, FLOAT, COMPLEX, BOOL, QSTR,
-SHORT_STR, and CONT are not pointers. Flash bytecode and UTF-8 have no
+SHORT_STR, and CONT are not pointers. A `MUT_COLLEC` address clears the
+low 2 bits first. Flash bytecode and UTF-8 have no
 nibbles. A frozen tuple or const pool uses this same layout. A ROM object
 with fixed fields does not tag every field. The first 8 bytes of flash
 are reserved so a pointer payload is never 0 or 4.
@@ -240,13 +241,12 @@ Complex arithmetic is a sequence on the binary32 float unit. There is no
 separate complex ALU. The integer unit is 64 bits wide and reads one
 register or the INT64 pair.
 
-Heap objects follow the existing pycore split. LIST, DICT, SET, TUPLE,
-STR, and BYTES start at their first field, because the register tag
-already names them. FUNCTION, TYPE, INSTANCE, and the other kinds that
-share the OBJECT tag store the kind in word 0 and the type pointer in
-word 1. The field lists and kind numbers are pivot plan §0.6. Range and
-iterator are OBJECT kinds. Pycore gave them their own tags, and this
-4-bit tag space has no code left for that.
+Heap objects follow the existing pycore split. List, dict, set, and
+bytearray share `MUT_COLLEC`, with the kind in the pointer's low 2 bits.
+TUPLE, STR, BYTES, RANGE, and ITER have their own tags and start at the
+first field. FUNCTION, TYPE, INSTANCE, and the other kinds that share
+the OBJECT tag store the kind in word 0 and the type pointer in word 1.
+The field lists are pivot plan §0.6.
 
 Accelerators that stay on this hart: the container accelerator (list,
 tuple, dict, set, bytearray), the string accelerator (ASCII case

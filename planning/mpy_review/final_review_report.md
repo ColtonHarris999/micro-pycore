@@ -41,7 +41,9 @@ After this review, the owner required three things:
    are `upycore`; the nightly GC soak is off; benchmarks are simulation
    only. Heap objects follow the pycore split: the register tag names a
    container or string, and an `OBJECT` value stores its kind in the
-   first memory word (pivot plan §0.6).
+   first memory word (pivot plan §0.6). List, dict, set, and bytearray
+   share `MUT_COLLEC` again. The kind is the pointer's low 2 bits, which
+   frees tags for range and iterator.
 
 `plan_A.md`, `plan_B.md`, `plan_C.md`, and `base_plan.md` are the
 historical inputs. They are not edited to match these decisions. The

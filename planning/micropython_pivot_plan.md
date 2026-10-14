@@ -98,15 +98,16 @@ own fields without a tag on every field.
 | `0111` | SHORT_STR | 4 | Length in the first payload's low byte, then up to 15 bytes across this register and three `CONT` registers |
 | `1000` | STR | 1 | Pointer. Length, hash, and bytes live in the object |
 | `1001` | TUPLE | 1 | Pointer |
-| `1010` | LIST | 1 | Pointer |
-| `1011` | DICT | 1 | Pointer |
-| `1100` | SET | 1 | Pointer |
-| `1101` | BYTES | 1 | Pointer. The object header distinguishes `bytes` and `bytearray` |
-| `1110` | OBJECT | 1 | Pointer. The header distinguishes function, module, type, instance, range, iterator, and exception |
+| `1010` | MUT_COLLEC | 1 | Pointer with the kind in the low 2 bits: `0` list, `1` dict, `2` set, `3` bytearray. The address is the payload with those bits cleared. Objects are 4-byte aligned, so those bits are otherwise zero |
+| `1011` | RANGE | 1 | Pointer to start, stop, step |
+| `1100` | ITER | 1 | Pointer to the iterable and the index |
+| `1101` | BYTES | 1 | Pointer to an immutable `bytes` |
+| `1110` | OBJECT | 1 | Pointer. The first memory word distinguishes function, module, type, instance, method, exception, and cell |
 | `1111` | CONT | 1 | Continuation of INT64, COMPLEX, or SHORT_STR. Not a value on its own |
 
 The collector reads the nibble before it follows a word. CONTROL, INT,
 INT64, FLOAT, COMPLEX, BOOL, QSTR, SHORT_STR, and CONT are not pointers.
+A `MUT_COLLEC` address is the payload with the low 2 bits cleared.
 `n_state` in the bytecode still counts Python values. Call setup expands
 a wide value into two or four physical registers. The compiler emits
 stock bytecode and does not encode that expansion.
@@ -121,12 +122,13 @@ along.
 
 ### 0.6 Heap objects (locked)
 
-Same split as `pycore/docs/object_model.md`. A list, dict, set, tuple,
-string, or bytes has its own register tag, so memory starts at the first
+Same split as `pycore/docs/object_model.md`. List, dict, set, and
+bytearray share `MUT_COLLEC`. The kind is the pointer's low 2 bits, which
+replaces the high bits of the old 128-bit payload. Tuple, string, bytes,
+range, and iterator have their own tags, so memory starts at the first
 field. A function, type, instance, bound method, builtin, exception,
-cell, module, range, or iterator uses the `OBJECT` tag. Its first word
-is the kind. The collector reads that word and traces the fields for
-that kind.
+cell, or module uses the `OBJECT` tag. Its first word is the kind. The
+collector reads that word and traces the fields for that kind.
 
 Words are 32-bit payloads with a tag nibble each. There is no 32-byte
 stride.
@@ -135,12 +137,15 @@ Containers and strings:
 
 | Tag | Word 0 | Word 1 | Word 2 | After that |
 | --- | --- | --- | --- | --- |
-| LIST | length | pointer to the item array | — | the array is one word per item |
+| MUT_COLLEC list | length | pointer to the item array | — | the array is one word per item |
+| MUT_COLLEC dict | used count | allocated slots | pointer to the table | each table slot is a key word then a value word |
+| MUT_COLLEC set | used count | allocated slots | pointer to the table | one word per slot |
+| MUT_COLLEC bytearray | length | capacity | pointer to the buffer | — |
 | TUPLE | length | element 0 | element 1 | elements continue in place |
-| DICT | used count | allocated slots | pointer to the table | each table slot is a key word then a value word |
-| SET | used count | allocated slots | pointer to the table | one word per slot |
 | STR | number of bytes | hash | pointer to the bytes | — |
-| BYTES | `0` for `bytes`, `1` for `bytearray` | length | pointer to the buffer | word 3 is capacity, `0` when immutable |
+| BYTES | length | pointer to the buffer | — | immutable |
+| RANGE | start | stop | step | — |
+| ITER | iterable pointer | index | — | — |
 
 `OBJECT` kinds, in the first word. Word 1 is the type pointer, or 0 when
 there is none. Fields start at word 2.
@@ -154,13 +159,10 @@ there is none. Fields start at word 2.
 | EXCEPTION | 6 | exception type, `args` tuple |
 | CELL | 7 | contents |
 | FUNCTION | 8 | code pointer, closure tuple |
-| RANGE | 9 | start, stop, step |
-| ITER | 10 | iterable pointer, index |
 | MODULE | 11 | globals dict |
 
 Kind values match pycore where pycore has that kind. Range and iterator
-were their own tags there. The 4-bit tag space is full, so they are
-`OBJECT` kinds here.
+have their own tags again, because `MUT_COLLEC` freed those codes.
 
 Bytecode and UTF-8 in flash have no tag nibbles. A frozen tuple or const
 pool uses the same word-plus-nibble layout. The first 8 bytes of flash
