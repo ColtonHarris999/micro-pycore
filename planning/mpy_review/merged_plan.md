@@ -121,7 +121,10 @@ stable part. The numeric encodings are not.
   (`py/persistentcode.h`).
 - **The header check is the pin's loader.** Major version must match.
   Sub-version is checked when the architecture nibble is not none.
-  Bytecode-only files are not rejected for sub-version alone. The small-int
+  Bytecode-only files are not rejected for sub-version alone, and the
+  pinned `mpy-cross` writes feature byte `0x00` for them (`4d 06 00 1f`
+  at 31-bit small ints). The source macro `MPY_SUB_VERSION` is 3; that
+  value is written only into a native file. The small-int
   width in the header has to fit the runtime. v1's image tool also rejects
   any architecture other than none, an architecture-flags value, a raw-code
   kind other than bytecode, and const kinds the running phase does not

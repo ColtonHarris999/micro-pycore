@@ -77,8 +77,12 @@ compiler to emit MicroPython bytecode. That removes its largest subsystems.
 
 Every feature below depends on this swap, so it comes first.
 
-MicroPython v1.29.0 writes `.mpy` version **6, sub-version 3**
-(`py/persistentcode.h`). The bytecode (`py/bc0.h`) has **72 single opcodes plus
+MicroPython v1.29.0 defines `.mpy` version **6, sub-version 3**
+(`py/persistentcode.h`). A bytecode-only file writes feature byte `0x00`:
+`mp_raw_code_save` stores the sub-version only when `cm->has_native` is
+set (`py/persistentcode.c`). `mpy-cross` with no `-march` therefore emits
+`4d 06 00 1f` for 31-bit small ints. The loader checks sub-version only
+when the architecture nibble is not none. The bytecode (`py/bc0.h`) has **72 single opcodes plus
 5 multi-opcode ranges**: small-int constants, `LOAD_FAST`, `STORE_FAST`,
 `UNARY_OP`, and `BINARY_OP`, each with a small operand folded into the opcode
 byte. Instructions are variable-length byte strings. There is no `CACHE` and no
