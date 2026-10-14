@@ -5,7 +5,8 @@ under `pycore/docs/`, `excore/docs/`, and `pycore_firmware/builtins/`.
 
 | File | Role |
 | --- | --- |
-| [`master_plan.md`](master_plan.md) | The only living roadmap: what is left to build, by track, plus policies and memory-map locks |
+| [`micropython_pivot_plan.md`](micropython_pivot_plan.md) | **The plan of record for micro-pycore:** restructuring this tree from a CPython 3.14 hart into a MicroPython microcontroller core. Read it first |
+| [`master_plan.md`](master_plan.md) | Inherited from pycore: the CPython-hart roadmap. Superseded by the pivot plan; take an item from it only if the pivot plan keeps that item |
 | [`cleanup_report.md`](cleanup_report.md) | Simplification and dead-code backlog, written as independent work items for agents |
 | [`accelerator_split_plan.md`](accelerator_split_plan.md) | Container accelerator, console `print`, `bytes`, startup accelerator config and excore fallbacks, and the excore as emulator (track 5 of the master plan) |
 | [`cpython_baseline_bytecode.md`](cpython_baseline_bytecode.md) | Opcode inventory of the measured CPython baseline suite. No new hart opcode is required |

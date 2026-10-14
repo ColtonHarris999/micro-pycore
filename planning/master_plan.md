@@ -1,5 +1,10 @@
 # Master plan
 
+> **micro-pycore:** this file was copied from pycore `43d791a` and describes the
+> CPython 3.14 hart. It is superseded by
+> [`micropython_pivot_plan.md`](micropython_pivot_plan.md). Don't start a
+> track here unless the pivot plan keeps it.
+
 PyCore is a CPython 3.14 bytecode CPU (hart) plus an RV32 companion
 (`excore`) that finishes recoverable container work. Programs boot from a
 host-built image, and the hart can now compile and run Python source

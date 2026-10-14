@@ -1,3 +1,17 @@
+# micro-pycore
+
+micro-pycore is being restructured into a microcontroller-class CPU whose
+instruction set is MicroPython bytecode. It is meant as an alternative to an
+ESP32, Pico, or STM32 board running MicroPython.
+
+**Current state:** this tree is a copy of
+[pycore](https://github.com/ColtonHarris999/pycore) `main` @ `43d791a`. Until
+the restructuring lands, it is still the CPython 3.14 machine described below.
+The plan of record is
+[`planning/micropython_pivot_plan.md`](planning/micropython_pivot_plan.md).
+
+---
+
 # PyCore
 
 A research CPU whose native ISA is a **CPython 3.14 bytecode subset**. The

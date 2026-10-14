@@ -1,6 +1,7 @@
 # micro-pycore: the MicroPython pivot plan
 
-Status: **plan, not started.** Written 2026-10-13.
+Status: **plan.** The pycore import from Track 0 is done: this tree is pycore
+`main` @ `43d791a`. Nothing else has started. Written 2026-10-13.
 
 Inputs: [pycore](https://github.com/ColtonHarris999/pycore) `main` @ `43d791a`
 (2026-10-13), MicroPython **v1.29.0** (`0fd6c573`, 2026-08-24), and the draft
@@ -17,12 +18,18 @@ interrupts.
 
 ## 0. Read this first
 
-### 0.1 This repository is not a copy of pycore
+### 0.1 Starting point: this tree is pycore `main` @ `43d791a`
 
-`main` contains a one-line `README.md` and nothing else. The only other
-content is the unmerged Cursor draft (`cursor/micropython-plan-b579`), which
-contains planning documents and no code. Track 0 below imports pycore before any
-other work can start.
+This repository started as a one-line `README.md`. The commit "Import pycore
+main @ 43d791a" copied pycore's tree from
+[`43d791a`](https://github.com/ColtonHarris999/pycore/commit/43d791aab6db610ba1030392d140950b45fa6f4f)
+as a snapshot; pycore's history stays in the pycore repository. Until a track
+below changes them, every file outside `planning/micropython_pivot_plan.md` is
+still the CPython 3.14 machine. Paths in this plan such as `pycore/rtl/…` and
+`pycore/docs/…` are paths in this repository.
+
+The unmerged Cursor draft (`cursor/micropython-plan-b579`) contains planning
+documents and no code. §9 compares it with this plan.
 
 ### 0.2 The plan in one paragraph
 
@@ -581,12 +588,21 @@ Compare timing traces with the host register model.
 
 ## 6. Everything else we need
 
-1. **Import pycore into this repo (Track 0).** Run
-   `git remote add pycore https://github.com/ColtonHarris999/pycore`, fetch, and
-   `git merge --allow-unrelated-histories` at `43d791a`. This keeps history and
-   blame; pycore's `.git` is 9.9 MB, and its wheels and zip add about 8 MB. Then
-   trim in reviewable commits, following §1.2. The pycore repo stays as the
-   record of the CPython hart.
+1. **Import pycore into this repo (Track 0). Done.** The import is a snapshot
+   of `43d791a`, not a history merge, so `git blame` stops at the import
+   commit. pycore keeps the full history and stays the record of the CPython
+   hart. Trim in reviewable commits, following §1.2.
+
+   The import brought pycore's CI with it:
+   - `.github/workflows/all-tests.yml` runs the full hardware matrix on every
+     non-docs PR to `main`.
+   - `.github/workflows/gc-nightly.yml` runs a daily cron once it is on `main`. By
+     the workflow's own estimate, that is about 4.5 hours of runner time a night:
+     gc-long 17 minutes, single-core fuzz 80 minutes, two-core fuzz 3 hours.
+
+   Decide whether this repository keeps the nightly run before the
+   restructuring makes it meaningless: it tests the 16 MB CPython GC
+   configuration.
 2. **One plan of record.** The Cursor draft and this plan disagree on six major
    points (§9). Choose one before agents start, or both roadmaps will move
    forward at once.
@@ -643,7 +659,7 @@ break.
 
 | Track | Week 1 (Oct 14–20) | Week 2 (Oct 21–27) | Week 3 (Oct 28–Nov 3) | Week 4 (Nov 4–10) |
 | --- | --- | --- | --- | --- |
-| **0: Import and pin** | Import pycore; pin MicroPython v1.29.0; build the oracle and `mpy-cross` in Docker; `targets/mpycore.json` | — | — | — |
+| **0: Import and pin** | Import pycore (done); pin MicroPython v1.29.0; build the oracle and `mpy-cross` in Docker; `targets/mpycore.json` | — | — | — |
 | **F: Front end** | Byte fetch; MicroPython decode of the integer subset; flash-image tool (reusing the `mpy-tool.py` reader) | Prelude decode for every function kind; qstr tables | — | — |
 | **X: Execution** | Calls with positional arguments, return | Defaults, closures, exception stack, trap→exception conversions, `MemoryError`/`OverflowError`, MicroPython dict order | Runtime `class`, `import`, `with`, binary32 float and formatting, `str.format` | `bytes`/`bytearray`/`struct` |
 | **M: Memory** | Microcontroller memory map; `UART_TX` print path; excore and caches out of the build | Stage-B 8-byte slot: one shared encode/decode helper | Stage B in every container FSM and in GC tracing | Measure density |
