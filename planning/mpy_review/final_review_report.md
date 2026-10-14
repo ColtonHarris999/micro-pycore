@@ -10,6 +10,21 @@ vendored). The phase contract is [`merged_plan.md`](merged_plan.md). The
 plan of record for product decisions remains
 [`../micropython_pivot_plan.md`](../micropython_pivot_plan.md).
 
+## Owner decision, 2026-10-14
+
+After this review, the owner required three things:
+
+1. One `.mpy` module loads another the way the pin does, including
+   `import *` and relative import. The standard library is not rewritten
+   this month. Frozen `.mpy` is linked into the image; a missing module
+   raises `ImportError`. There is no filesystem this month.
+2. `*args` and `**kwargs` match `mp_setup_code_state` in `py/bc.c`.
+3. The month aims at as much of the pinned oracle as will run. The
+   deferral list is in the merged plan's coverage section.
+
+The conflict section below is the review's earlier, narrower resolution.
+The plans now follow this decision. Open question 5 is answered.
+
 A finding is confirmed only when a file in this tree or in that tag
 supports it. Majority among A, B, and C is not a vote.
 
@@ -151,8 +166,9 @@ Two reviewer recommendations are rejected because they contradict that
 map:
 
 - Keyword calls and `*args` as a v1 non-goal (C). Keyword calls stay,
-  because the binder already takes them. `*args` / `**kwargs` stay out of
-  the v1 exit tests and are an image-build reject until a test is named.
+  because the binder already takes them. The review left `*args` /
+  `**kwargs` as an image-build reject. The owner decision at the top of
+  this report puts them in phase 4.
 - Leaving `super()`, properties, and f-strings unnamed (A, C). The pivot
   week-3 exit includes a property, a classmethod, and `super()`. F-strings
   are the lexer rewrite in `py/lexer.c` line 352, plus `str.format`.
@@ -574,13 +590,15 @@ Phase 6 is the compiler and the REPL.
 
 C named them as non-goals. The pivot plan's opcode map includes
 `IMPORT_STAR` and the var-keyword calls. The first import exit in the
-pivot plan is two modules, `from` import, and `import as`. It does not
-show `import *`.
+pivot plan, at the time of the review, was two modules, `from` import,
+and `import as`. It did not show `import *`.
 
-Resolution: those three stay out of the v1 exit tests and fail at image
-build until a revision adds a test. The opcodes remain in the catalog as
-`reject` until then. That is narrower than a silent "the binder already
-does it" and wider than deleting them from the map.
+The review's resolution was to keep those three out of the v1 exit tests.
+The owner reversed that on 2026-10-14. Phase 4 now runs them, and the
+image tool accepts the bytecode. `*args` is a tuple of surplus
+positionals, including the empty tuple (`py/bc.c`). `import *` is
+`mp_import_all` (`py/runtime.c`). The standard library is still not
+rewritten this month.
 
 ## Reconciliation with the pivot plan
 
@@ -618,10 +636,10 @@ Remaining differences, and why they are not contradictions:
 - The merged plan locks UART overrun and the testbench timer tick. The
   pivot plan now states the same rules in §5.2. They are marked as
   product choices.
-- `import *`, relative import, and `*args` are catalogued as `reject`
-  until a test exists. The pivot opcode map still lists the opcodes.
-  §1.0 of the pivot plan now says the v1 image tool rejects them until
-  that test exists.
+- `import *`, relative import, and `*args` were catalogued as `reject`
+  at the end of the review. The owner decision above puts them in phase 4
+  on both plans. The standard library stays unrewritten, and import still
+  uses the frozen table rather than a filesystem.
 
 ## Gaps found in this tree
 
@@ -677,9 +695,10 @@ excluded.
 4. UART overrun (drop newest, sticky bit 30) and the testbench timer tick
    are choices. The host-model experiment in the conflict section is the
    time to change them, before RTL.
-5. `import *`, relative import, and `*args` / `**kwargs` are image-build
-   rejects in v1. Say if a driver you care about needs one of them in the
-   first month.
+5. Answered 2026-10-14. `import *`, relative import, and `*args` /
+   `**kwargs` are in phase 4. The standard library is not rewritten this
+   month, and there is still no filesystem. Say if import must also open
+   a `.mpy` from storage before the month ends.
 6. Idle-time GC and `GC_REQ` stay in the pivot plan and are not re-specified
    here. They are cut-list item 3. No change unless you want them in the
    phase 5 gate.

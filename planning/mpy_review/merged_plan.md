@@ -11,6 +11,12 @@ The pin is MicroPython **v1.29.0** (`0fd6c573`). Opcode numbers, operand
 layouts, and object bit-masks are read from that tag into
 `pycore/targets/mpycore.json`. They are not copied into this file.
 
+Owner decision, 2026-10-14: cover as much of that pin as this month can
+run. One `.mpy` module loads another the way the unix oracle does, and
+`*args` binds the way the pin binds it. The standard library is not
+rewritten this month. The deferral list is in
+[Coverage this month](#coverage-this-month).
+
 ## Where the truth lives
 
 ```text
@@ -154,9 +160,11 @@ stable part. The numeric encodings are not.
   writes in the same opcode (`py/gc.c`). Porting that order would commit
   state the abort rule then has to undo. Container commands keep the
   current rule: the object is finished before a reader sees it.
-- **Libraries** are frozen modules in flash, plus native modules for
-  `machine`, `time`, `gc`, `micropython`, and `sys`. `import` loads a
-  frozen module. `machine` is not a frozen `.mpy`.
+- **Libraries** are frozen `.mpy` modules in flash, plus native modules
+  for `machine`, `time`, `gc`, `micropython`, and `sys`. `import` runs
+  another module's bytecode. `machine` is not a frozen `.mpy`. The
+  standard library is linked from `.mpy` the pinned `mpy-cross` produced,
+  or it is absent. It is not rewritten this month.
 - **Interrupts.** A hard IRQ is taken at the next bytecode boundary with
   the heap locked, so an allocation in that handler raises `MemoryError`.
   A soft IRQ and `micropython.schedule` queue `(function, argument)` and
@@ -176,6 +184,44 @@ stable part. The numeric encodings are not.
 `mpy-cross` is invoked with `-msmall-int-bits=31`, no `-march`, and an
 explicit `-O0` until a revision says otherwise. A distro `mpy-cross` is
 the wrong bytecode.
+
+## Coverage this month
+
+A program the pinned `mpy-cross` accepts and the unix oracle runs is in
+scope, unless it needs something on the deferral list. The image tool
+rejects native code, viper, and inline asm. It accepts `*args`,
+`**kwargs`, `import`, `from ... import`, `from ... import *`, and
+relative import.
+
+Import looks up a frozen module table. There is no filesystem this month,
+so a loose `.mpy` on a host path is linked into that table by the image
+tool. It is not opened at run time. `sys.modules` caches the module, and
+a second import does not run the body again. A missing name raises
+`ImportError` with the pin's message (`py/builtinimport.c`). `import *`
+is `IMPORT_STAR`, which calls `mp_import_all` (`py/runtime.c`): the names
+in `__all__` when that list exists, otherwise the public names that do
+not start with `_`.
+
+`*args` follows `mp_setup_code_state` in `py/bc.c`. Extra positional
+arguments become a tuple. A call that passes no extras still binds the
+empty tuple. A function without the varargs scope flag raises the
+oracle's `TypeError` when it is given too many positionals. `**kwargs`
+is the same function: surplus keywords go in a dict when the callable
+has that flag, and a keyword the signature does not accept raises the
+oracle's `TypeError` when it does not. Both are phase 4, not an
+image-build reject.
+
+Still deferred, and the only reasons to reject a program the oracle would
+run:
+
+| Deferred | Why it waits |
+| --- | --- |
+| Rewriting the standard library | This month links `.mpy` or leaves the module absent. It does not reimplement `json`, `os`, `re`, and the rest |
+| Filesystem and `open` | Import uses the frozen table. A VFS is later |
+| Native, viper, inline asm | No native emitter |
+| Generators, `async`, `asyncio` | After the deadline, as in the pivot plan |
+| MPZ | After the deadline. `LONGLONG` is the v1 int |
+| Finalisers and weakrefs | Off on the oracle variant and on the hart |
 
 ## v1 locks
 
@@ -462,25 +508,43 @@ passes on the CPython configuration until the product build drops it.
   defaults (`MAKE_FUNCTION_DEFARGS`, including a non-literal default) are
   in this phase. Keyword calls are the existing binder: the operand
   carries a positional count and a keyword count, and keywords sit on the
-  stack as qstr/value pairs. `*args` and `**kwargs` stay out of the v1
-  exit tests. A scheduled callback in phase 5 is a module-level function
-  or a closure this phase can already build.
-- `import` of a frozen module: one module object per name, cached so the
-  body runs once; `from m import name`; `import m as z`; `__name__` is
-  `"__main__"` on the entry module and the module name on the other.
-  Two frozen modules may import each other. `import *` and relative
-  imports are rejected at image build until a later revision names a test.
+  stack as qstr/value pairs. `*args` and `**kwargs` are in this phase and
+  match [Coverage this month](#coverage-this-month). A scheduled callback
+  in phase 5 is a module-level function or a closure this phase can
+  already build.
+- `import` loads another `.mpy` module and runs it. The forms are
+  `import m`, `from m import name`, `from m import *`, `import m as z`,
+  and a relative import inside a package. One module object per name,
+  cached so the body runs once. `__name__` is `"__main__"` on the entry
+  module and the module's name on every other. Two frozen modules may
+  import each other. A name that is not in the frozen table and is not a
+  native module raises `ImportError`. This phase does not rewrite
+  standard-library sources. It runs the `.mpy` the image tool linked.
 - binary32 float results and `str.format`, including the f-string rewrite
   the pin's lexer does (`py/lexer.c`), land here. Float text is the pin's
   binary32 formatter, tested on the host before it is firmware.
 
-**Exit.** `make test-mpy-phase4` exits 0. One flash image holds two
-modules. The program builds a class with a base and a method, catches
-`ZeroDivisionError`, and runs a `with` on the success path and on a
-swallowed exception. Stdout matches the oracle. A second program divides
-by zero with no handler: the traceback channel matches the oracle text
-with addresses masked, and the halt reason is the uncaught reason. A
-clean return of the first program uses the clean-return reason.
+**Exit.** `make test-mpy-phase4` exits 0. One flash image holds the
+modules below. Stdout matches the oracle on each program.
+
+- A class with a base and a method, a caught `ZeroDivisionError`, and a
+  `with` on the success path and on a swallowed exception.
+- Module `a` imports module `b` and calls a function defined in `b`.
+  `from b import *` binds `b`'s public names and does not bind `_private`.
+  Importing `b` again does not run its body a second time. Importing a
+  name that was not linked raises `ImportError` with the oracle's
+  message. Package `pkg` contains `pkg.sub`, and `from .other import x`
+  inside `pkg.sub` binds `x`.
+- `def f(a, *rest)` printed for `f(1)`, `f(1, 2, 3)`, and `f(1, *xs)`
+  matches the oracle, including the empty tuple. `def g(*a, **k)` printed
+  for a call with extra keywords matches the oracle. A call that passes
+  too many positionals to a function without `*args`, or a keyword that
+  function does not accept and does not collect with `**kwargs`, raises
+  the oracle's `TypeError`.
+- A second program divides by zero with no handler: the traceback channel
+  matches the oracle text with addresses masked, and the halt reason is
+  the uncaught reason. A clean return of the first program uses the
+  clean-return reason.
 
 ### Phase 5 — Microcontroller surface
 
@@ -525,7 +589,7 @@ the table.
 | Milestone | Exit command | Expected result |
 | --- | --- | --- |
 | C1 expressions, assignment, `if` / `while` / `for`, calls | `python3 pycore_firmware/compiler/test_mpy_emit.py --milestone C1` | The wrapped `.mpy` runs on the oracle with the same stdout as the source. Byte-identity with `mpy-cross` is reported, not required yet |
-| C2 `def`, closures, defaults, `try` / `except` / `finally`, comprehensions | the same command with `--milestone C2` | Same oracle stdout rule |
+| C2 `def`, closures, defaults, `*args` / `**kwargs`, `try` / `except` / `finally`, comprehensions | the same command with `--milestone C2` | Same oracle stdout rule, including the phase 4 `*args` program |
 | C3 `class`, `import`, `with`, `const`, `:=`, f-string rewriting | `--milestone C3` | Same rule, and the class and import programs from phase 4 compile on the host |
 | C4 device and REPL | `make test-mpy-repl` | The simulator's UART accepts the raw REPL sequence the pivot plan §6 describes, and `mpremote` against that pty runs a phase 4 program |
 
@@ -537,8 +601,7 @@ start the next.
 
 | Item | Trigger | Constraint |
 | --- | --- | --- |
-| Generators, `async`, `asyncio` | After the deadline | `YIELD_VALUE` and `YIELD_FROM`. `uasyncio` is a frozen library and counts against the 512 KB flash |
-| `*args`, `**kwargs`, `import *`, relative import | A named test | Image-build reject until then |
+| Generators, `async`, `asyncio` | After the deadline | `YIELD_VALUE` and `YIELD_FROM`. `uasyncio` is a frozen library and counts against the 512 KB flash. Its `.mpy` can be linked later; it is not rewritten this month |
 | SPI, I2C, ADC, PWM, WDT | A driver needs the registers | New offsets past `0x34`. The same IRQ rule |
 | MPZ | A benchmark needs `bm_pidigits` | Post-deadline. `LONGLONG` stays the v1 int |
 | 4-byte `REPR_A` slot | Density work after the deadline | Honor the address 0 and 4 reservation |
@@ -560,7 +623,9 @@ retargeted.
 - Bit-identical heap layouts with MicroPython's C structs.
 - A second core that runs the MicroPython C VM, and freezing `py/compile.c`.
 - `__del__` finalisers, weak references, and `id()` in expected output.
-- A filesystem and `open` in v1.
+- A filesystem and `open` in v1. Import uses the frozen `.mpy` table.
+- Rewriting the MicroPython standard library this month. Absent modules
+  raise `ImportError`.
 - Threads.
 - `@micropython.native`, viper, and inline asm. The image tool rejects
   them. The compile error matches `mpy-cross` without `-march`.
@@ -662,3 +727,4 @@ and are absent from the phase text above.
 | F22 Recursion is `RuntimeError` | B, C | Phase 4 |
 | F26 A returning `main` must still poll; blink is bounded | C | Phase 5 |
 | F27 Unix `machine` is not the MMIO oracle | B, C | Phase 5 |
+| Owner, 2026-10-14 | — | `.mpy` import, including `import *` and relative import, is phase 4. `*args` and `**kwargs` match `py/bc.c`. The standard library is not rewritten this month |
