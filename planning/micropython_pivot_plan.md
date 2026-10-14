@@ -874,6 +874,7 @@ Already out of this implementation: the on-device compiler, the REPL, physical b
 
 1. Generators and `asyncio` (already a stretch goal)
 2. Idle-time GC
+
 Never cut the oracle switch, exceptions as values, the 32-bit payload, inline short strings, `MUT_COLLEC`, or the simulated comparison with the unix oracle.
 
 ---
