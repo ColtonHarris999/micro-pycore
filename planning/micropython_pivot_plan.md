@@ -46,7 +46,7 @@ MicroPython's unix port the oracle. Then add what a microcontroller needs:
 interrupts, `machine`, `time`, and `gc`. Programs arrive as `.mpy` from host
 `mpy-cross`. The on-device compiler and the REPL wait.
 
-### 0.3 Decisions to confirm (they change the schedule)
+### 0.3 Decisions (locked)
 
 | # | Decision | Recommendation | Why | Main alternative |
 | --- | --- | --- | --- | --- |
@@ -56,7 +56,7 @@ interrupts, `machine`, `time`, and `gc`. Programs arrive as `.mpy` from host
 | D4 | Oracle | **MicroPython v1.29.0 unix port, custom variant** (§3.2) | It's the closest stdout match to an RP2/ESP32 build that can run on a host in CI | Real boards, used for benchmarks but not for CI |
 | D5 | On-device compiler | **Not in this implementation.** The hart runs `.mpy` from host `mpy-cross`. The REPL and the on-device compiler wait | Owner decision. The bytecode has to run before a compiler on the device is useful | Retarget the compiler and ship it in the first implementation |
 | D6 | Harts | **One.** Remove excore from the product build | Container growth already runs on the single-hart accelerator. Only `print` still goes through excore | — |
-| D7 | Reporting clock | **Synthesized Fmax, plus equal-clock comparisons with each board** | The current 1 GHz assumption is not a microcontroller clock | — |
+| D7 | Reporting clock | **Synthesized Fmax, plus simulator cycles against the unix oracle** | This core will not be manufactured for the comparison. The old 1 GHz assumption is not a microcontroller clock | — |
 
 ### 0.4 Decisions answered
 
@@ -259,9 +259,9 @@ test.
 | `time` with MicroPython's tick API | Every timing loop uses it | `ticks_ms`/`us`/`cpu`, `ticks_diff`, `ticks_add` (wrapping at MicroPython's tick period), `sleep`, `sleep_ms`, `sleep_us`. The sleeps use the timer and `WFI` instead of busy-waiting | 3 | A `ticks_diff` test across the wrap point |
 | `gc` module | `gc.collect()` and `gc.mem_free()` are in most examples | `collect`, `enable`, `disable`, `isenabled`, `mem_free`, `mem_alloc`, `threshold` (§5.5) | 2–3 | `gc.mem_free()` moves the expected way |
 | `sys` | `sys.print_exception` is MicroPython-specific, and `sys.implementation._mpy` advertises `.mpy` compatibility | `platform` is `upycore`. `implementation.name` is `upycore`. Also `byteorder`, `maxsize`, `exit`, `modules`, `print_exception`, `stdout.write`. `_mpy` advertises version 6, architecture none, small-int width 31, using the pin's encoding | 3 | `sys.platform` is `upycore` and `sys.implementation.name` is `upycore` |
-| Walrus `:=` | MicroPython accepts it (`MICROPY_PY_ASSIGN_EXPR`); pycore rejects it | Compiler only | 3 | Matches the oracle, including MicroPython's looser comprehension rule |
-| `KeyboardInterrupt` from Ctrl-C | Needed to stop a runaway loop at the REPL | A pending exception, checked at the same points as scheduled callbacks (§5.3) | 4 | Ctrl-C stops `while True: pass` |
-| REPL, paste mode, raw REPL | This is how people use a MicroPython board, and the raw REPL is what `mpremote` and Thonny speak | §6.3 | 4 | `mpremote run x.py` works against the simulator |
+| Walrus `:=` | MicroPython accepts it (`MICROPY_PY_ASSIGN_EXPR`); pycore rejects it | Compiler only. Not this implementation | later | Matches the oracle, including MicroPython's looser comprehension rule |
+| `KeyboardInterrupt` from Ctrl-C | Needed to stop a runaway loop at the REPL | A pending exception, checked at the same points as scheduled callbacks (§5.3). Not this implementation | later | Ctrl-C stops `while True: pass` |
+| REPL, paste mode, raw REPL | This is how people use a MicroPython board, and the raw REPL is what `mpremote` and Thonny speak | §6.3. Not this implementation | later | `mpremote run x.py` works against the simulator |
 | Generators, `async`/`await`, `asyncio` | `asyncio` is MicroPython's concurrency model | **After the deadline.** MicroPython keeps a generator's frame state in a heap object, which is simpler to make resumable than a CPython frame. Needs `YIELD_VALUE`, `YIELD_FROM`, and generator `throw`/`close`/`pend_throw` | stretch | `bm_nqueens` and `core_yield_from` run |
 | `@micropython.native` / `viper` / `asm_*` | Used in speed-critical code | **Not supported:** there is no native emitter. Reject them the way `mpy-cross` does without `-march`. Don't silently ignore `viper`, because viper integers wrap at 32 bits | — | The compile error matches `mpy-cross` |
 
@@ -311,7 +311,10 @@ comes from the oracle.
 
 ---
 
-## 2. Compiler
+## 2. Compiler (not in this implementation)
+
+Host `mpy-cross` emits every `.mpy` this implementation runs. The work in
+this section is the later on-device compiler. Do not start it now.
 
 ### 2.1 What exists
 
@@ -384,7 +387,8 @@ against an 8-byte slot today.
 | C3 | `class`, `import`, `with`, `const`, `:=`, f-string rewriting; the 31-bit field repacking | 3 |
 | C4 | The 64 KB budget; running on the device; connected to the REPL | 4 |
 
-If time runs out, the REPL ships with C2 scope.
+The REPL is not part of this implementation. When the compiler is started
+later, a slipped schedule ships the REPL with C2 scope.
 
 ---
 
@@ -792,7 +796,7 @@ Compare timing traces with the host register model.
    leaves). `mpremote` and Thonny use the raw REPL.
 4. **Boot sequence and frozen manifest.** Use MicroPython's `manifest.py`
    (`freeze`, `module`, `require`) through `tools/manifestfile.py`. Boot runs
-   `boot.py`, then `main.py`, then the REPL, as MicroPython does. The firmware
+   `boot.py`, then `main.py`. The REPL comes later. The firmware
    builtins and the compiler are frozen modules too.
 5. **No filesystem in v1.** `open` is absent, as on a MicroPython port with no
    VFS. Later: a RAM disk, then littlefs in flash, so user modules can be
@@ -870,9 +874,7 @@ Already out of this implementation: the on-device compiler, the REPL, physical b
 
 1. Generators and `asyncio` (already a stretch goal)
 2. Idle-time GC
-3. Inline short strings, storing those strings as a heap pointer instead
-
-Never cut the oracle switch, exceptions as values, the 32-bit payload, or the simulated comparison with the unix oracle.
+Never cut the oracle switch, exceptions as values, the 32-bit payload, inline short strings, `MUT_COLLEC`, or the simulated comparison with the unix oracle.
 
 ---
 
@@ -908,7 +910,7 @@ CPython-hart work stays in pycore.
 | Float and long ints off; 31-bit ints that raise `OverflowError` | binary32 float, 64-bit `LONGLONG` ints, `complex` kept | Binary32 matches ESP32 and RP2. Those boards use MPZ for ints; `LONGLONG` matches the existing ALU, and MPZ stays post-deadline. A 31-bit limit breaks `0xFFFFFFFF` register masks (D3) |
 | 32-bit `REPR_A` object word | 32-bit payload plus a 4-bit sideband tag. A 64-bit int or a complex uses the next register (§0.5) | Inline floats do not fit in a 32-bit word that also holds the tag. The tag sits beside the payload |
 | One schedule queue; all IRQs handled when the next bytecode is dispatched | Hard and soft classes, matching MicroPython's jump-point semantics; `GC_REQ` and idle GC | Matches MicroPython's behavior, and uses interrupts for GC |
-| "Cycle counts are recorded, not compared" | Compared against real boards on `perf_bench` | Your requirement |
+| "Cycle counts are recorded, not compared" | Compared in simulation with the unix oracle on `perf_bench`. No physical boards | This core will not be manufactured for the comparison |
 | Oracle config not specified | A concrete variant (§3.2) | Without one, `MemoryError` and float parity can't be tested |
 
 Several numbers in the draft don't match `43d791a`: it gives RTL as about 82,000
