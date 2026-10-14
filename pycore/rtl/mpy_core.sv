@@ -1289,7 +1289,7 @@ module mpy_core
             S_EXEC: begin
                 if (op >= 8'h70 && op < 8'hb0) begin push(vint(32'(op) - 32'h80)); st <= S_FETCH; end
                 else if (op >= 8'hb0 && op < 8'hc0) begin
-                    if (rf[`LI(op - 8'hb0)] == VNULL) raise_msg(ABI_MSG_LOCAL_UNBOUND);
+                    if (rf[`LI(op - 8'hb0)] == VNULL && !(fflags & FF_FW)) raise_msg(ABI_MSG_LOCAL_UNBOUND);
                     else begin push(rf[`LI(op - 8'hb0)]); st <= S_FETCH; end
                 end else if (op >= 8'hc0 && op < 8'hd0) begin
                     rf[`LI(op - 8'hc0)] <= rf[6'(sp - 7'd1)]; sp <= sp - 7'd1; st <= S_FETCH;
@@ -1305,7 +1305,7 @@ module mpy_core
                 8'h51: begin push(VNONE); st <= S_FETCH; end
                 8'h52: begin push(VTRUE); st <= S_FETCH; end
                 8'h53: begin push(VNULL); st <= S_FETCH; end
-                8'h24: if (rf[`LI(arg)] == VNULL) raise_msg(ABI_MSG_LOCAL_UNBOUND);
+                8'h24: if (rf[`LI(arg)] == VNULL && !(fflags & FF_FW)) raise_msg(ABI_MSG_LOCAL_UNBOUND);
                        else begin push(rf[`LI(arg)]); st <= S_FETCH; end
                 8'h26: begin rf[`LI(arg)] <= rf[6'(sp - 7'd1)]; sp <= sp - 7'd1; st <= S_FETCH; end
                 8'h28: if (rf[`LI(arg)] == VNULL) raise_msg(ABI_MSG_LOCAL_UNBOUND);

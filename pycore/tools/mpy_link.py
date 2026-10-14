@@ -653,6 +653,9 @@ def link(main: Path, modules: list[tuple[str, Path, bool]], fw: Path, out: Path,
         maddr = img.emit_words([(T["INT"], abi.OB["MODULE"]), mod_type, g, img.qval(mname)])
         native_mods.append((img.qval(mname), (T["OBJECT"], maddr)))
     fw_items["_NATIVE_MODULES"] = emit_dict(img, native_mods)
+    # Firmware frames may hold NULL in a local; this global is how the
+    # firmware spells it.
+    fw_items["NULL"] = NULL
 
     # Frozen user modules.
     frozen = emit_dict(img, [(img.qval(m.name), (T["INT"], m.md_addr)) for m in user_mods])
