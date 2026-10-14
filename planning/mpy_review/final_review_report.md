@@ -21,8 +21,24 @@ After this review, the owner required three things:
 2. `*args` and `**kwargs` match `mp_setup_code_state` in `py/bc.c`.
 3. The month aims at as much of the pinned oracle as will run. The
    deferral list is in the merged plan's coverage section.
+4. The value encoding is a 32-bit payload plus a 4-bit sideband tag,
+   with two registers for a 64-bit int or a complex and four for a short
+   string. SRAM and flash words stay 32 bits. Tags in memory are a packed
+   nibble array. The register file is 64 entries and the call stack is 32
+   frames. This replaces the earlier 8-byte-slot and post-deadline
+   `REPR_A` end state. Pivot plan §0.5 and the merged plan's value section
+   are the spec.
+5. Bytecode-only `.mpy` files match `mpy-cross` at v1.29.0: header
+   `4d 06 00 1f`. Sub-version 3 is the source macro, written only into a
+   native file.
+6. The on-device compiler stays within 32 Python frames and 64 KB of peak
+   heap for a 200-line module. It has no bigint. Integer literals outside
+   signed 64-bit are a compile error even though host `mpy-cross` accepts
+   them.
 
-The conflict section below is the review's earlier, narrower resolution.
+`plan_A.md`, `plan_B.md`, `plan_C.md`, and `base_plan.md` are the
+historical inputs. They are not edited to match these decisions. The
+conflict section below is the review's earlier, narrower resolution.
 The plans now follow this decision. Open question 5 is answered.
 
 A finding is confirmed only when a file in this tree or in that tag

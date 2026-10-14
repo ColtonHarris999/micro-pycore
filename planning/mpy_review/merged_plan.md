@@ -133,14 +133,12 @@ stable part. The numeric encodings are not.
 - **Names** are qstrs. Globals and attributes key on qstr. String literals
   in bytecode are qstrs (`LOAD_CONST_STRING`). A heap `str` is the result
   of an operation that builds one.
-- **The v1 object word is the hart's existing slot** (D2): 32 bytes through
-  bring-up, then an 8-byte packed slot. MicroPython's 4-byte `REPR_A` word
-  is the post-deadline density step. The oracle still uses `REPR_A`, so
-  stdout matches a 32-bit port. When that density step lands, a ROM object
-  must not be placed at address 0 or 4: in a non-debug build those words
-  are `MP_OBJ_NULL` and `MP_OBJ_SENTINEL` (`py/obj.h`), and
-  `MP_OBJ_STOP_ITERATION` is the null word. The GC follows a pointer only
-  when it addresses a block head in the SRAM heap window.
+- **A value is a 32-bit payload plus a 4-bit tag beside it** (pivot plan
+  §0.5). The tag table, the wide-register rules, and the nibble array in
+  SRAM and flash are in [Value representation](#value-representation).
+  The oracle still uses `REPR_A` so stdout matches a 32-bit port. The
+  collector follows a pointer only when the nibble says so and the address
+  is in the SRAM heap.
 - **Integers** are the hart's 64-bit datapath, in MicroPython's `LONGLONG`
   mode (D3). Overflow raises `OverflowError`. Small ints inside the oracle's
   32-bit `REPR_A` word are 31 bits; a value that does not fit promotes to
@@ -149,9 +147,10 @@ stable part. The numeric encodings are not.
   is not (`mpy-cross/mpconfigport.h`), and constant folding is on. A test
   of overflow, division, or an add uses runtime values. A literal expression
   the cross compiler can fold is a const object, not an ALU program.
-- **Float** is IEEE binary32. **Complex** stays. Both match D3. The CPython
-  binary64 unit remains in the tree until the shrink after the deadline;
-  every float result the oracle sees is rounded to binary32.
+- **Float** is IEEE binary32, inline in one register. **Complex** is two
+  binary32 values in two registers. The float unit sequences complex
+  operations. There is no separate complex ALU. Every float result the
+  oracle sees is binary32.
 - **Strings** are UTF-8. The oracle leaves
   `MICROPY_PY_BUILTINS_STR_UNICODE` at the extra-features default, which is
   on, so indexing follows the pin's Unicode path. Case conversion above
@@ -187,6 +186,68 @@ stable part. The numeric encodings are not.
 `mpy-cross` is invoked with `-msmall-int-bits=31`, no `-march`, and an
 explicit `-O0` until a revision says otherwise. A distro `mpy-cross` is
 the wrong bytecode.
+
+## Value representation
+
+This is the encoding agents implement. It is also pivot plan §0.5. The
+imported hart's 128-bit payload and 32-byte slot are the starting RTL,
+not the target.
+
+One register is one index: a 4-bit tag and a 32-bit payload. A read
+returns both. The file may be one 36-bit array or a 32-bit array plus a
+4-bit array with the same index. It is not two architectural register
+files.
+
+The live file is **64 entries**. A function whose expanded `n_state`
+does not fit is a load error. The call stack is **32 frames**. The frame
+reserve, spill, and tag nibbles for that budget are **16 KB**. The 256 KB
+spill at `0xF40000` is not part of the product. There is no DRAM. There
+is no L1 and no L2. SRAM and flash data words are 32 bits. Addresses are
+byte addresses. A value's payload sits at `data_base + 4*i`. Its tag is
+nibble `i`. Eight tags fill one word. Nothing is zeroed between a payload
+and its tag.
+
+| Tag | Name | Registers | Payload |
+| --- | --- | --- | --- |
+| `0000` | CONTROL | 1 | `[3:0]` kind: `0` empty, `1` `None`, `2` null / end of iteration, `3` dict tombstone |
+| `0001` | INT | 1 | Signed 32-bit value. The `.mpy` small-int range is still 31 bits |
+| `0010` | INT64 | 2 | Low 32 bits, then `CONT` with the high 32 bits. Signed 64-bit |
+| `0011` | FLOAT | 1 | IEEE binary32 |
+| `0100` | COMPLEX | 2 | Real binary32, then `CONT` with the imaginary binary32 |
+| `0101` | BOOL | 1 | `[0]`. Arithmetic retags it as INT |
+| `0110` | QSTR | 1 | Interned-string id |
+| `0111` | SHORT_STR | 4 | Length in the first payload's low byte, then up to 15 bytes across this register and three `CONT` registers |
+| `1000` | STR | 1 | Pointer to a long string. Length, hash, and bytes are in the object |
+| `1001` | TUPLE | 1 | Pointer |
+| `1010` | LIST | 1 | Pointer |
+| `1011` | DICT | 1 | Pointer |
+| `1100` | SET | 1 | Pointer |
+| `1101` | BYTES | 1 | Pointer. The header distinguishes `bytes` and `bytearray` |
+| `1110` | OBJECT | 1 | Pointer. The header distinguishes function, module, type, instance, range, iterator, and exception |
+| `1111` | CONT | 1 | Second or later register of INT64, COMPLEX, or SHORT_STR |
+
+`n_state` counts Python values. Call setup expands INT64 and COMPLEX to
+two physical registers and SHORT_STR to four. The compiler emits stock
+v1.29.0 bytecode and does not encode that expansion. Names and constant
+strings are QSTRs. SHORT_STR is the non-interned string of at most 15
+bytes. A longer string is STR.
+
+The collector reads nibble `i` before it follows the word at
+`data_base + 4*i`. CONTROL, INT, INT64, FLOAT, COMPLEX, BOOL, QSTR,
+SHORT_STR, and CONT are not pointers. Flash bytecode and UTF-8 have no
+nibbles. A frozen tuple or const pool uses this same layout. A ROM object
+with fixed fields does not tag every field. The first 8 bytes of flash
+are reserved so a pointer payload is never 0 or 4.
+
+Complex arithmetic is a sequence on the binary32 float unit. There is no
+separate complex ALU. The integer unit is 64 bits wide and reads one
+register or the INT64 pair.
+
+Accelerators that stay on this hart: the container accelerator (list,
+tuple, dict, set, bytearray), the string accelerator (ASCII case
+conversion; Unicode indexing stays), the integer ALU, and the float unit.
+The prelude cache and the qstr name cache stay. The RV32 excore, the L1,
+and the L2 leave the product build.
 
 ## Coverage this month
 
@@ -238,7 +299,7 @@ together.
 | Oracle | The unix port built as the variant below, 32-bit (`i686-linux-gnu-` or the pin's own 32-bit CI recipe). Stdout and stderr compared separately, addresses masked |
 | Variant | `LONGLONG`, binary32 float, `REPR_A`, extra-features ROM level, error reporting normal, scheduler depth 8, finalisers off, emergency exception buffer on, stack check on. Unicode `str` left at the extra-features default |
 | Toolchain | `mpy-cross` from the pin, flags above. New flash-image tool. `tools/mpy-tool.py` from the pin is the independent decoder |
-| Object word | D2. Stage A: existing 32-byte slot. Stage B: 8-byte packed slot, during phase 3. `REPR_A` after the deadline |
+| Object word | 32-bit payload plus a 4-bit sideband tag. See [Value representation](#value-representation) |
 | Integers | 64-bit `LONGLONG`. Overflow is `OverflowError`. MPZ is later |
 | Float, complex | binary32 float and complex on |
 | Code memory | Flash, byte-addressed, execute in place. PC is a byte address. Runtime-compiled code lives in SRAM and is also byte-addressed. The 8-byte fetch buffer holds instruction bytes only |
@@ -272,12 +333,14 @@ simulator. The diff says which bytes are which.
 | Window | Base | Size | Contents |
 | --- | --- | ---: | --- |
 | Flash | `0x0000_0000` | 512 KB | linked image: frozen bytecode, qstr pool, builtin objects |
-| SRAM | `0x2000_0000` | 256 KB | frame reserve, resized RF spill, schedule ring, handler table, GC pool |
+| SRAM | `0x2000_0000` | 256 KB | 16 KB frame reserve, schedule ring, handler table, GC pool |
 | MMIO | `0x4000_0000` | 4 KB | UART, GPIO, timer, IRQ |
 | Sim control | `0xE000_0000` | 256 B | halt reason, cycle counter. Simulation only |
 
-The first 8 bytes of flash are reserved, so a later `REPR_A` pointer never
-aliases the null word or the sentinel word.
+The first 8 bytes of flash are reserved, so a pointer payload is never 0
+or 4. Frame reserve is 16 KB for 32 frames (§ Value representation). The
+rest of the 256 KB, after the schedule ring and the handler table, is the
+GC pool.
 
 SRAM is 1-cycle. Flash has a wait-state parameter, default 1. There is no
 L2 and no 16 MB backing store in the programming model. The fetch path
@@ -286,14 +349,9 @@ on the first byte of the group (pivot plan §1.0). That buffer holds
 instruction bytes only. It does not cache MMIO, and a data load from
 flash is not an instruction prefetch.
 
-Phase 0 locks the SRAM split in `pycore/docs/mpy_memory_map.md` after
-measuring it. The frame region today is 32 KB and the spill region is
-256 KB (`pycore/docs/architecture.md`). The spill is resized down. The
-measurement is the calls area (`make test-calls`), which already prints
-`RF spill_count` from the testbench, plus the frame high-water mark. The
-reserve is that high-water mark plus the schedule ring and the handler
-table. The GC pool is the remainder. Until that page lands, no other
-phase hard-codes a pool size.
+The frame reserve is 16 KB, as in [Value representation](#value-representation).
+The imported spill is 256 KB at `0xF40000` and is not copied in. Later
+phases use the pool size written in `pycore/docs/mpy_memory_map.md`.
 
 ### Peripheral registers (v1)
 
@@ -365,25 +423,28 @@ Docs, catalog, submodule, oracle variant. No RTL edit.
 
 - Add `vendor/micropython` at v1.29.0.
 - Write `pycore/targets/mpycore.json` with the `.mpy` version and
-  sub-version read from `py/persistentcode.h`, the object-word masks read
-  from `py/obj.h`, and one row per opcode from `py/bc.h` and `py/bc0.h`:
-  operand format, stack effect, and a phase number or `reject`. Record the
-  prelude field names and the const-kind reject list. Record the immediate
-  ids of `None`, `False`, and `True` from the pin.
+  sub-version read from `py/persistentcode.h`, the tag table from
+  [Value representation](#value-representation), and one row per opcode
+  from `py/bc.h` and `py/bc0.h`: operand format, stack effect, and a phase
+  number or `reject`. Record the prelude field names and the const-kind
+  reject list. Record the immediate ids of `None`, `False`, and `True`
+  from the pin. A bytecode-only sample header is `4d 06 00 1f`.
 - Snapshot the static qstr list.
 - Add the `mpycore` unix variant and build `mpy-cross` from the same
   commit.
-- Write `pycore/docs/mpy_memory_map.md` with the windows above and the
-  measured SRAM split.
+- Write `pycore/docs/mpy_memory_map.md` with the windows above, the 16 KB
+  frame reserve, the 64-entry register file, and the 32-frame stack.
 - Disassemble one `while`, one `def`, one `class`, one `with`, and one
   `for` with `mpy-cross` and keep the dumps as fixtures, so the catalog
   matches the emitter.
 
 **Exit.** `python3 pycore/tools/mpy_pin_check.py` exits 0 and prints
 `mpy-version: 6.3` equal to `MPY_VERSION` and `MPY_SUB_VERSION` in
-`vendor/micropython/py/persistentcode.h`, plus `static-qstr: ok`.
-`make test-calls` has been run and `pycore/docs/mpy_memory_map.md` records
-the spill high-water mark and the resulting GC pool size.
+`vendor/micropython/py/persistentcode.h`, plus `static-qstr: ok`, plus
+`header: 4d 06 00 1f` for a bytecode-only file from that `mpy-cross`.
+`pycore/docs/mpy_memory_map.md` records the 16 KB frame reserve and the
+GC pool as the rest of the 256 KB after that reserve, the schedule ring,
+and the handler table.
 `git diff --exit-code -- pycore/rtl` is empty for this phase's commit.
 
 ### Phase 1 — Flash image and prelude
@@ -467,8 +528,9 @@ recorded as a folded const, and that program is not the ALU test.
   reference can be allocated again. One allocation larger than the GC pool
   raises `MemoryError`. The oracle is run with `-X heapsize` equal to that
   pool.
-- Stage B's 8-byte slot lands in this phase, behind one shared
-  encode/decode helper, as the pivot plan's memory track describes.
+- Container slots and the register file use the 32-bit payload and the
+  packed tag nibbles from [Value representation](#value-representation).
+  One shared encode/decode helper lands before the container FSMs change.
 - `LOAD_METHOD` / `CALL_METHOD` for a native method such as `list.append`,
   `LOAD_SUBSCR` / `STORE_SUBSCR`, and `GET_ITER` / `FOR_ITER` / `range` are
   in this phase. `for` is not a generator. End of iteration is the
@@ -583,11 +645,21 @@ a source that can be frozen. The acceptance rule is the pivot plan's: the
 compiler accepts what `mpy-cross` v1.29.0 accepts inside the supported
 scope, and otherwise raises the same `SyntaxError` text.
 
+The compiler's own Python calls stay within 32 frames. A frame-depth
+linter rejects a cycle in the call graph and fails if the worst-case
+depth exceeds 32. Nested work uses an explicit stack in `array('i')` or
+a `bytearray`. A 200-line module stays within 64 KB of peak heap. The
+parse tree is integer indexes in `array('i')`, not a live object graph
+held across every pass. Bytecode-only files are `4d 06 00 1f`. An integer
+literal outside signed 64-bit is a compile error. Host `mpy-cross` accepts
+those literals; the harness treats "oracle accepted, we rejected" as a
+pass only in that band.
+
 **Exit.** `python3 pycore_firmware/compiler/test_mpy_emit.py --milestone C1`
 exits 0: the wrapped `.mpy` run on the oracle prints the same stdout as
 the source. The later rows are the same command at C2 and C3, then
 `make test-mpy-repl` for the raw REPL. Each row's expected result is in
-the table.
+the table. The frame-depth linter exits 0 on the compiler sources.
 
 | Milestone | Exit command | Expected result |
 | --- | --- | --- |
@@ -607,7 +679,7 @@ start the next.
 | Generators, `async`, `asyncio` | After the deadline | `YIELD_VALUE` and `YIELD_FROM`. `uasyncio` is a frozen library and counts against the 512 KB flash. Its `.mpy` can be linked later; it is not rewritten this month |
 | SPI, I2C, ADC, PWM, WDT | A driver needs the registers | New offsets past `0x34`. The same IRQ rule |
 | MPZ | A benchmark needs `bm_pidigits` | Post-deadline. `LONGLONG` stays the v1 int |
-| 4-byte `REPR_A` slot | Density work after the deadline | Honor the address 0 and 4 reservation |
+| Inline short strings | The 4-register form misses the heap budget | Store those strings as a STR pointer |
 | Wider than the 8-byte fetch buffer | A measurement shows the 8-byte buffer missing | Still instruction bytes only. It does not cache MMIO |
 
 ## What stays in force on the CPython configuration
@@ -646,8 +718,8 @@ retargeted.
 - **Slot size and the GC pool differ from the unix heap.** `MemoryError`
   tests are the dropped-reference test and one oversize allocation. They
   do not pin an append index.
-- **The 256 KB spill does not fit in 256 KB SRAM.** Phase 0 measures a
-  smaller spill. Skipping that measurement leaves no heap.
+- **The imported 256 KB spill is the whole SRAM.** The product reserve is
+  16 KB for 32 frames. Copying the old spill in leaves no heap.
 - **Roots.** A scan of the value-stack slice below the stack pointer misses
   locals in the pin's frame (`py/vm.c` sets `fastn` at
   `state[n_state - 1]`). This hart keeps its own frames and roots every
@@ -730,4 +802,4 @@ and are absent from the phase text above.
 | F22 Recursion is `RuntimeError` | B, C | Phase 4 |
 | F26 A returning `main` must still poll; blink is bounded | C | Phase 5 |
 | F27 Unix `machine` is not the MMIO oracle | B, C | Phase 5 |
-| Owner, 2026-10-14 | — | `.mpy` import, including `import *` and relative import, is phase 4. `*args` and `**kwargs` match `py/bc.c`. The standard library is not rewritten this month |
+| Owner, 2026-10-14 | — | `.mpy` import and `*args` / `**kwargs` are phase 4. Values are a 32-bit payload plus a 4-bit tag. The call stack is 32 frames. Bytecode-only headers are `4d 06 00 1f` |
