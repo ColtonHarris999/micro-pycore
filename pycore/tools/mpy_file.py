@@ -121,7 +121,19 @@ def read_qstr(reader: Reader, catalog: Catalog) -> str:
     return text
 
 
-def read_obj(reader: Reader, catalog: Catalog) -> object:
+class FloatConst(float):
+    """A float const as the ``.mpy`` stores it: the host's repr text."""
+
+    text: str
+
+
+class ComplexConst(complex):
+    text: str
+
+
+def read_obj(reader: Reader, catalog: Catalog, numeric: bool = False) -> object:
+    """``numeric`` accepts float and complex consts (the v2 linker does; phase 1 does not)."""
+
     kind = reader.read_byte()
     kinds = catalog.const_kinds
     if kind == kinds["fun_table"]["id"]:
@@ -136,7 +148,7 @@ def read_obj(reader: Reader, catalog: Catalog) -> object:
         return Ellipsis
     if kind == kinds["tuple"]["id"]:
         count = reader.read_uint()
-        return tuple(read_obj(reader, catalog) for _ in range(count))
+        return tuple(read_obj(reader, catalog, numeric) for _ in range(count))
 
     length = reader.read_uint()
     if length == 0 and kind == kinds["bytes"]["id"]:
@@ -154,9 +166,19 @@ def read_obj(reader: Reader, catalog: Catalog) -> object:
             raise MpyError(f"rejected integer literal {value} outside signed 64-bit")
         return value
     if kind == kinds["float"]["id"]:
-        raise MpyError("rejected const kind float")
+        if not numeric:
+            raise MpyError("rejected const kind float")
+        text = str(payload, "ascii")
+        value = FloatConst(float(text))
+        value.text = text
+        return value
     if kind == kinds["complex"]["id"]:
-        raise MpyError("rejected const kind complex")
+        if not numeric:
+            raise MpyError("rejected const kind complex")
+        text = str(payload, "ascii")
+        cvalue = ComplexConst(complex(text))
+        cvalue.text = text
+        return cvalue
     raise MpyError(f"rejected const kind {kind}")
 
 
@@ -183,7 +205,7 @@ def read_raw_code(reader: Reader, catalog: Catalog, arch: int, arch_name: str) -
     return RawCode(kind=kind, fun_data=fun_data, prelude=prelude, children=children)
 
 
-def read_mpy(data: bytes, filename: str, catalog: Catalog) -> MpyModule:
+def read_mpy(data: bytes, filename: str, catalog: Catalog, numeric: bool = False) -> MpyModule:
     """Parse one bytecode ``.mpy``. A non-none architecture is a link error."""
 
     reader = Reader(data)
@@ -206,7 +228,7 @@ def read_mpy(data: bytes, filename: str, catalog: Catalog) -> MpyModule:
     qstr_count = reader.read_uint()
     obj_count = reader.read_uint()
     qstrs = [read_qstr(reader, catalog) for _ in range(qstr_count)]
-    objs = [read_obj(reader, catalog) for _ in range(obj_count)]
+    objs = [read_obj(reader, catalog, numeric) for _ in range(obj_count)]
     raw = read_raw_code(reader, catalog, arch, arch_name)
     if arch != 0:
         raise MpyError(f"rejected architecture {arch_name}")
