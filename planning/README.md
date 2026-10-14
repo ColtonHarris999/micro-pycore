@@ -6,6 +6,7 @@ under `pycore/docs/`, `excore/docs/`, and `pycore_firmware/builtins/`.
 | File | Role |
 | --- | --- |
 | [`micropython_pivot_plan.md`](micropython_pivot_plan.md) | **The plan of record for micro-pycore:** restructuring this tree from a CPython 3.14 hart into a MicroPython microcontroller core. Read it first |
+| [`micropython_mcu_plan.md`](micropython_mcu_plan.md) | The earlier MicroPython draft, merged in [PR #1](https://github.com/ColtonHarris999/micro-pycore/pull/1). It assumed a new core in a separate tree; this tree now retargets pycore instead. Kept for reference. Where it disagrees with the pivot plan, the pivot plan governs (pivot plan §9) |
 | [`master_plan.md`](master_plan.md) | Inherited from pycore: the CPython-hart roadmap. Superseded by the pivot plan; take an item from it only if the pivot plan keeps that item |
 | [`cleanup_report.md`](cleanup_report.md) | Simplification and dead-code backlog, written as independent work items for agents |
 | [`accelerator_split_plan.md`](accelerator_split_plan.md) | Container accelerator, console `print`, `bytes`, startup accelerator config and excore fallbacks, and the excore as emulator (track 5 of the master plan) |

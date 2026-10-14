@@ -9,6 +9,9 @@ ESP32, Pico, or STM32 board running MicroPython.
 the restructuring lands, it is still the CPython 3.14 machine described below.
 The plan of record is
 [`planning/micropython_pivot_plan.md`](planning/micropython_pivot_plan.md).
+The earlier draft,
+[`planning/micropython_mcu_plan.md`](planning/micropython_mcu_plan.md), is kept
+for reference; §9 of the pivot plan lists where the two differ.
 
 ---
 

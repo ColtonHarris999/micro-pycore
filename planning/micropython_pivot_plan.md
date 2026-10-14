@@ -4,8 +4,9 @@ Status: **plan.** The pycore import from Track 0 is done: this tree is pycore
 `main` @ `43d791a`. Nothing else has started. Written 2026-10-13.
 
 Inputs: [pycore](https://github.com/ColtonHarris999/pycore) `main` @ `43d791a`
-(2026-10-13), MicroPython **v1.29.0** (`0fd6c573`, 2026-08-24), and the draft
-plan on branch `cursor/micropython-plan-b579`. Every number about pycore below
+(2026-10-13), MicroPython **v1.29.0** (`0fd6c573`, 2026-08-24), and the Cursor
+draft plan, merged in [PR #1](https://github.com/ColtonHarris999/micro-pycore/pull/1) as
+[`micropython_mcu_plan.md`](micropython_mcu_plan.md). Every number about pycore below
 was measured on that commit. Every claim about MicroPython was checked
 against that tag's source, not from memory. Section 10 lists the files.
 
@@ -28,8 +29,10 @@ below changes them, every file outside `planning/micropython_pivot_plan.md` is
 still the CPython 3.14 machine. Paths in this plan such as `pycore/rtl/…` and
 `pycore/docs/…` are paths in this repository.
 
-The unmerged Cursor draft (`cursor/micropython-plan-b579`) contains planning
-documents and no code. §9 compares it with this plan.
+The Cursor draft was merged in [PR #1](https://github.com/ColtonHarris999/micro-pycore/pull/1) as
+[`micropython_mcu_plan.md`](micropython_mcu_plan.md). It is a plan only, with no
+code. It assumed a new core in a separate tree, which this import replaces. §9
+compares the two.
 
 ### 0.2 The plan in one paragraph
 
@@ -603,9 +606,10 @@ Compare timing traces with the host register model.
    Decide whether this repository keeps the nightly run before the
    restructuring makes it meaningless: it tests the 16 MB CPython GC
    configuration.
-2. **One plan of record.** The Cursor draft and this plan disagree on six major
-   points (§9). Choose one before agents start, or both roadmaps will move
-   forward at once.
+2. **One plan of record.** The Cursor draft (`micropython_mcu_plan.md`) and
+   this plan disagree on six major points (§9). `planning/README.md` names this
+   plan the plan of record, and the draft carries a note saying so. Keep it that
+   way, or agents will advance both roadmaps at once.
 3. **REPL over UART.** The normal REPL, paste mode (Ctrl-E), and **raw REPL**
    (Ctrl-A; Ctrl-D executes; "OK" responses; Ctrl-B leaves). `mpremote` and
    Thonny use the raw REPL. With the simulator's UART exposed on a pty (through
@@ -709,7 +713,7 @@ against boards.
 
 ---
 
-## 9. Relation to the Cursor draft (`cursor/micropython-plan-b579`)
+## 9. Relation to the Cursor draft (`micropython_mcu_plan.md`, merged in [PR #1](https://github.com/ColtonHarris999/micro-pycore/pull/1))
 
 **Kept:** pinning one MicroPython release; the unix-port oracle; the memory-map
 addresses; the peripheral register offsets; the safe-point GC rule; the
