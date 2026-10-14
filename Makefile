@@ -116,6 +116,7 @@ EXCORE_RTL_SRCS := \
 	pycore-python-tests pycore-size-report pycore-compile-suite pycore-mem \
 	pycore-cache-lru pycore-cache pycore-ram pycore-l1d-handoff pycore-fetch \
 	pycore-frame pycore-frame-fib pycore-regfile pycore-codc pycore-gic \
+	pycore-mpy-periph \
 	pycore-img-container-call-spike \
 	pycore-list-append-fixtures pycore-for-iter-fixtures \
 	pycore-list-extend-fixtures pycore-excore-integration-fixtures \
@@ -454,6 +455,22 @@ pycore-gic:
 		pycore/rtl/pycore_cache_lru.sv pycore/rtl/pycore_gic.sv \
 		pycore/tb/tb_gic.sv
 	./$(BUILD_DIR)/pycore_gic/Vtb_gic
+
+# Phase-5 UART/GPIO/timer/IRQ. Edge counts come from the host register model.
+pycore-mpy-periph:
+	mkdir -p $(BUILD_DIR)
+	$(PYTHON3) pycore/tools/mpy_periph_model.py --self-check
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_mpy_periph \
+		--Mdir $(BUILD_DIR)/mpy_periph \
+		-Wall -Wno-fatal \
+		pycore/rtl/mpy_mmio_pkg.sv \
+		pycore/rtl/mpy_irq.sv \
+		pycore/rtl/mpy_periph.sv \
+		pycore/tb/tb_mpy_periph.sv
+	./$(BUILD_DIR)/mpy_periph/Vtb_mpy_periph \
+		$$($(PYTHON3) pycore/tools/mpy_periph_model.py --plusargs)
 
 pycore-l1d-handoff:
 	mkdir -p $(BUILD_DIR)
@@ -796,7 +813,7 @@ excore-test: excore-asm-tests excore-cpu-test
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-alu-units pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff pycore-mem-nb \
-	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile
+	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile pycore-mpy-periph
 
 DOCKER_MAKE = docker run --rm $(DOCKER_RUN_FLAGS) \
 	-v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" \
