@@ -32,9 +32,14 @@ After this review, the owner required three things:
    `4d 06 00 1f`. Sub-version 3 is the source macro, written only into a
    native file.
 6. The on-device compiler stays within 32 Python frames and 64 KB of peak
-   heap for a 200-line module. It has no bigint. Integer literals outside
-   signed 64-bit are a compile error even though host `mpy-cross` accepts
-   them.
+   heap for a 200-line module when it is built. It has no bigint. Integer
+   literals outside signed 64-bit are a compile error even though host
+   `mpy-cross` accepts them. It is not in this implementation.
+7. Further owner answers, 2026-10-14: host `mpy-cross` only; short strings
+   stay in four registers; the register file is one 36-bit array; case
+   conversion is ASCII-only; `sys.platform` and `sys.implementation.name`
+   are `upycore`; the nightly GC soak is off; benchmarks are simulation
+   only. The heap object header is still unlocked.
 
 `plan_A.md`, `plan_B.md`, `plan_C.md`, and `base_plan.md` are the
 historical inputs. They are not edited to match these decisions. The

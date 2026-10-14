@@ -7,9 +7,10 @@ name: GC nightly
 # Same docker targets as all-tests.yml. On 4-core runners: gc-long ~17 min,
 # fuzz ~80 min single-core and ~3 h two-core (run 37286990167).
 
+# Nightly schedule is off. The job tests the imported 16 MB CPython GC, and
+# this repository is not keeping that soak while the MicroPython retarget is
+# the work in progress. Run it by hand with workflow_dispatch if you need it.
 on:
-  schedule:
-    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:

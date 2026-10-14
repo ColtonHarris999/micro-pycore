@@ -43,10 +43,8 @@ the CPython 3.14 front end with a decoder for the pinned MicroPython
 bytecode. Replace the 16 MB cache hierarchy with execute-in-place flash,
 256 KB of SRAM, and MMIO. The unix port of the pin, built as the variant
 in [v1 locks](#v1-locks), is the stdout and stderr oracle. Interrupts,
-`machine`, `time`, `gc`, and a UART REPL come after the bytecode runs.
-The on-device compiler is the Python compiler already in
-`pycore_firmware/compiler/`, retargeted to emit this bytecode and shipped
-as a frozen `.mpy`.
+`machine`, `time`, and `gc` come after the bytecode runs. Programs arrive
+as `.mpy` from host `mpy-cross`. The on-device compiler and the REPL wait.
 
 The pivot plan's weeks run several tracks at once. The phases below are
 the gates those weeks have to pass. A later track may prepare docs and
@@ -58,7 +56,7 @@ green.
 | 1 | Phase 2 |
 | 2 | Phase 3, and the exception, closure, and default-argument parts of phase 4 |
 | 3 | The rest of phase 4, and blink plus echo from phase 5 |
-| 4 | Phase 6 through the REPL cut line in the pivot plan §7 |
+| 4 | UART `print`, benchmarks on the simulator, no REPL |
 
 ## Audit of the machine at `43d791a`
 
@@ -154,7 +152,7 @@ stable part. The numeric encodings are not.
 - **Strings** are UTF-8. The oracle leaves
   `MICROPY_PY_BUILTINS_STR_UNICODE` at the extra-features default, which is
   on, so indexing follows the pin's Unicode path. Case conversion above
-  ASCII is checked against the oracle before any table is deleted.
+  ASCII only. The non-ASCII case tables come out.
 - **GC is always on.** The rule is the one in `pycore/docs/gc.md`: an
   allocation that does not fit aborts the opcode before the first
   architectural commit, the core collects, and the opcode is
@@ -194,9 +192,8 @@ imported hart's 128-bit payload and 32-byte slot are the starting RTL,
 not the target.
 
 One register is one index: a 4-bit tag and a 32-bit payload. A read
-returns both. The file may be one 36-bit array or a 32-bit array plus a
-4-bit array with the same index. It is not two architectural register
-files.
+returns both. The file is one 36-bit array, chosen so it can be synthesized
+as a single memory. It is not two architectural register files.
 
 The live file is **64 entries**. A function whose expanded `n_state`
 does not fit is a load error. The call stack is **32 frames**. The frame
@@ -307,7 +304,7 @@ together.
 | GC | Always on. Abort before the first architectural commit, then re-dispatch. Finalisers off |
 | Harts | One. `print` stores bytes to `UART_TX` on this hart |
 | Interrupts | Hard at the next bytecode boundary, heap locked. Soft at the pin's jump opcodes, heap unlocked, depth 8 |
-| Compiler on device | The existing Python compiler, retargeted. `py/compile.c` is not frozen into flash |
+| Compiler on device | Not in this implementation. Host `mpy-cross` emits the `.mpy`. `py/compile.c` is not frozen into flash |
 | Success metric | Stdout and stderr match the oracle. Cycles are recorded and, in the benchmark track, compared with boards on `perf_bench` |
 
 ### Oracle variant
@@ -322,9 +319,10 @@ the pivot plan §3.2 describes, plus the depth, finaliser, emergency
 buffer, and stack-check settings in the lock table.
 
 From phase 3 the harness passes `-X heapsize` equal to the GC pool only.
-Programs under test do not print `sys.platform` or `sys.implementation`
-unless both sides are pinned to the same strings. The oracle run is
-unbuffered. Tracebacks are stderr on the unix port
+Both the device and the oracle variant return `sys.platform` as
+`upycore` and `sys.implementation.name` as `upycore`. The variant patches
+the unix port, whose default name is `micropython` and whose default
+platform is `linux`. The oracle run is unbuffered. Tracebacks are stderr on the unix port
 (`MICROPY_ERROR_PRINTER`) and a distinct channel on `UART_TX` in the
 simulator. The diff says which bytes are which.
 
@@ -408,7 +406,7 @@ either choice is written down before the RTL.
 | `CONSOLE_TX` "a store is a printed byte" | **Reuse the idea** at `UART_TX` |
 | L1/L2, 16 MB RAM, excore in the product build | **Remove from the product build.** Sources stay until the replacement gate is green |
 | binary64 FPU | **Keep the datapath for now.** Round results to binary32. Shrink after the deadline |
-| On-device Python compiler | **Retarget** to this bytecode. Ship as a frozen `.mpy` |
+| On-device Python compiler | **Later.** This implementation runs host `mpy-cross` output |
 | `py/compile.c` and `py/parse.c` from the pin | **Do not freeze.** This hart does not run the C VM |
 | CPython 3.14 decoder, `CACHE` / `EXTENDED_ARG`, exception tables | **Replace** with the MicroPython decoder and the exception stack |
 | Insertion-order dict sidecar | **Remove** once the hash-order model matches the oracle |
@@ -638,12 +636,12 @@ oracle. `hard_irq_alloc` prints the uncaught-IRQ `MemoryError` text. The
 edge trace matches the host register model. The unix port is not asked to
 finish an infinite loop.
 
-### Phase 6 — Compiler, REPL, and what waits
+### Phase 6 — Later: compiler, REPL, and what waits
 
-The compiler track from the pivot plan §2 runs here. `py/compile.c` is not
-a source that can be frozen. The acceptance rule is the pivot plan's: the
-compiler accepts what `mpy-cross` v1.29.0 accepts inside the supported
-scope, and otherwise raises the same `SyntaxError` text.
+Not in this implementation. The hart runs `.mpy` from host `mpy-cross`.
+When the on-device compiler returns, `py/compile.c` is still not a source
+that can be frozen. It accepts what `mpy-cross` v1.29.0 accepts inside
+the supported scope, and otherwise raises the same `SyntaxError` text.
 
 The compiler's own Python calls stay within 32 frames. A frame-depth
 linter rejects a cycle in the call graph and fails if the worst-case
@@ -655,11 +653,14 @@ literal outside signed 64-bit is a compile error. Host `mpy-cross` accepts
 those literals; the harness treats "oracle accepted, we rejected" as a
 pass only in that band.
 
-**Exit.** `python3 pycore_firmware/compiler/test_mpy_emit.py --milestone C1`
+**Exit for this implementation.** No compiler or REPL target. `mpy-cross`
+from the pin produces the `.mpy` files that phases 1–5 run.
+
+**Exit when the compiler returns.** `python3 pycore_firmware/compiler/test_mpy_emit.py --milestone C1`
 exits 0: the wrapped `.mpy` run on the oracle prints the same stdout as
 the source. The later rows are the same command at C2 and C3, then
-`make test-mpy-repl` for the raw REPL. Each row's expected result is in
-the table. The frame-depth linter exits 0 on the compiler sources.
+`make test-mpy-repl` for the raw REPL. The frame-depth linter exits 0
+on the compiler sources.
 
 | Milestone | Exit command | Expected result |
 | --- | --- | --- |
@@ -668,8 +669,7 @@ the table. The frame-depth linter exits 0 on the compiler sources.
 | C3 `class`, `import`, `with`, `const`, `:=`, f-string rewriting | `--milestone C3` | Same rule, and the class and import programs from phase 4 compile on the host |
 | C4 device and REPL | `make test-mpy-repl` | The simulator's UART accepts the raw REPL sequence the pivot plan §6 describes, and `mpremote` against that pty runs a phase 4 program |
 
-If the calendar runs out, the REPL ships with C2 scope, which is the pivot
-plan's cut line.
+The REPL is not part of this implementation.
 
 These stay unstarted until a program needs them. Landing one does not
 start the next.

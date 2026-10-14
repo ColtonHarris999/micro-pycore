@@ -43,8 +43,8 @@ front end with a decoder for MicroPython v1.29.0 bytecode. Replace the 16 MB
 cache hierarchy with a microcontroller memory map: execute-in-place flash,
 256 KB of SRAM, and MMIO. Delete what MicroPython doesn't have. Make
 MicroPython's unix port the oracle. Then add what a microcontroller needs:
-interrupts, `machine`, `time`, `gc`, and a UART REPL. Rewrite the on-device
-compiler to emit MicroPython bytecode. That removes its largest subsystems.
+interrupts, `machine`, `time`, and `gc`. Programs arrive as `.mpy` from host
+`mpy-cross`. The on-device compiler and the REPL wait.
 
 ### 0.3 Decisions to confirm (they change the schedule)
 
@@ -54,28 +54,27 @@ compiler to emit MicroPython bytecode. That removes its largest subsystems.
 | D2 | How a value is stored | **32-bit payload plus a 4-bit tag beside it** (§0.5). A 64-bit int and a complex each take the next register. A short string takes four. Memory words stay 32 bits; tags in memory are a packed nibble array | Matches a 32-bit microcontroller and keeps inline ints and inline binary32 floats. The imported RTL is still a 128-bit payload in a 32-byte slot; the retarget changes that | Keep the 128-bit payload, or pack everything into one 8-byte slot. Both spend SRAM on every small int |
 | D3 | Number model | **64-bit ints that raise `OverflowError`, binary32 float, `complex` kept** | This is MicroPython's `LONGLONG` int mode, which pycore's 64-bit ALU already implements. ESP32 and RP2 use binary32 float, and `time.sleep(0.5)` needs a float. Two perf_bench programs use `complex` | MPZ bigints, the ESP32/RP2 default. That is post-deadline; only `bm_pidigits` needs it |
 | D4 | Oracle | **MicroPython v1.29.0 unix port, custom variant** (§3.2) | It's the closest stdout match to an RP2/ESP32 build that can run on a host in CI | Real boards, used for benchmarks but not for CI |
-| D5 | On-device compiler | **Rewrite it in place to emit MicroPython bytecode. Ship it as a frozen `.mpy`** | A microcontroller product needs a REPL, and a REPL needs a compiler. MicroPython bytecode removes the compiler's largest subsystems (§2) | Leave it out of v1, as the Cursor draft does |
+| D5 | On-device compiler | **Not in this implementation.** The hart runs `.mpy` from host `mpy-cross`. The REPL and the on-device compiler wait | Owner decision. The bytecode has to run before a compiler on the device is useful | Retarget the compiler and ship it in the first implementation |
 | D6 | Harts | **One.** Remove excore from the product build | Container growth already runs on the single-hart accelerator. Only `print` still goes through excore | — |
 | D7 | Reporting clock | **Synthesized Fmax, plus equal-clock comparisons with each board** | The current 1 GHz assumption is not a microcontroller clock | — |
 
-### 0.4 Questions for you
+### 0.4 Decisions answered
 
-1. What is the deadline, and what does "publish" mean: a paper submission, a
-   public release, or both? §7 assumes a hard date of about **2026-11-13**.
-2. How many people (and agents) will work on this in parallel? §7 has eight
-   tracks.
-3. Can you buy about $40 of boards (Pico, Pico 2, ESP32, ESP32-C3)? §4 depends
-   on measuring them.
-4. Is the REPL (and therefore the on-device compiler) required by the deadline,
-   or a stretch goal? It is the fourth item on the cut list in §7.
+1. Programs arrive as `.mpy` from host `mpy-cross`. No on-device compiler and no REPL in this implementation.
+2. Short strings stay in four registers.
+3. The register file is one 36-bit array.
+4. `str.upper`, `str.lower`, and `isalpha` and the related checks are ASCII-only, which is what MicroPython does. The non-ASCII case tables come out.
+5. `sys.platform` is `upycore`. `sys.implementation.name` is `upycore`.
+6. The nightly GC soak is off. `.github/workflows/gc-nightly.yml` has no schedule.
+7. Benchmarks are simulation only. No boards. Compare the simulator with the unix oracle at the same heap. Published board numbers are not a gate.
+8. The heap object header is the one item not yet locked. Do not invent one.
 
 ### 0.5 Value representation (locked)
 
 The imported hart stores a 4-bit tag plus a 128-bit payload in a 32-byte
 slot (`pycore/docs/tags.md`). The MicroPython machine does not. One
 register is 36 bits: a 4-bit tag and a 32-bit payload, one index. The
-register file can be built as one 36-bit array or as a 32-bit array and a
-4-bit array that share that index. A read returns both halves.
+register file is one 36-bit array. A read of an index returns the tag and the payload together.
 
 SRAM and flash data words are 32 bits, byte-addressed. The tag does not
 sit in that word, and nothing is zeroed beside it. Slot `i` is the word at
@@ -213,7 +212,7 @@ test.
 | `machine` module | This is the product surface | `Pin`, `Timer`, `UART`, `mem8`/`mem16`/`mem32`, `freq`, `reset`, `idle`, `disable_irq`/`enable_irq`, `unique_id`. Later: `PWM`, `ADC`, `I2C`, `SPI`, `WDT` | 3–4 | blink, echo, and debounce (§5) |
 | `time` with MicroPython's tick API | Every timing loop uses it | `ticks_ms`/`us`/`cpu`, `ticks_diff`, `ticks_add` (wrapping at MicroPython's tick period), `sleep`, `sleep_ms`, `sleep_us`. The sleeps use the timer and `WFI` instead of busy-waiting | 3 | A `ticks_diff` test across the wrap point |
 | `gc` module | `gc.collect()` and `gc.mem_free()` are in most examples | `collect`, `enable`, `disable`, `isenabled`, `mem_free`, `mem_alloc`, `threshold` (§5.5) | 2–3 | `gc.mem_free()` moves the expected way |
-| `sys` | `sys.print_exception` is MicroPython-specific, and `sys.implementation._mpy` advertises `.mpy` compatibility | `platform`, `implementation`, `byteorder`, `maxsize`, `exit`, `modules`, `print_exception`, `stdout.write` | 3 | `sys.implementation` matches what we decide to advertise |
+| `sys` | `sys.print_exception` is MicroPython-specific, and `sys.implementation._mpy` advertises `.mpy` compatibility | `platform` is `upycore`. `implementation.name` is `upycore`. Also `byteorder`, `maxsize`, `exit`, `modules`, `print_exception`, `stdout.write`. `_mpy` advertises version 6, architecture none, small-int width 31, using the pin's encoding | 3 | `sys.platform` is `upycore` and `sys.implementation.name` is `upycore` |
 | Walrus `:=` | MicroPython accepts it (`MICROPY_PY_ASSIGN_EXPR`); pycore rejects it | Compiler only | 3 | Matches the oracle, including MicroPython's looser comprehension rule |
 | `KeyboardInterrupt` from Ctrl-C | Needed to stop a runaway loop at the REPL | A pending exception, checked at the same points as scheduled callbacks (§5.3) | 4 | Ctrl-C stops `while True: pass` |
 | REPL, paste mode, raw REPL | This is how people use a MicroPython board, and the raw REPL is what `mpremote` and Thonny speak | §6.3 | 4 | `mpremote run x.py` works against the simulator |
@@ -229,7 +228,7 @@ test.
 | excore (the second hart: RV32, mailbox, firmware) | `excore/`, `pycore_excore_system.sv` (468 lines), the 33-test `excore` area | Remove from the product build; it stays in pycore. Move `print` to the single hart: ROM `print` formats the text, then stores the bytes to `UART_TX` | A whole second core |
 | L1I/L1D/L2 caches and the 16 MB RAM model | `pycore_cache.sv` (1,363), `pycore_cache_lru.sv`, `pycore_mem_hier.sv` (523), `pycore_mem_xbar.sv`, `+MEM_LATENCY` | Replace with execute-in-place flash (wait-state parameter), 1-cycle SRAM, and MMIO | All cache area |
 | binary64 float | `pycore_fpu.sv` and friends | Keep the datapath for now and round every result to binary32. Double rounding is harmless for `+ − × ÷ √` because 53 ≥ 2·24 + 2. Shrink the datapath to binary32 after the deadline | Area, after the shrink |
-| Unicode case and character classification above U+00FF | STRACC tables (`string_accel.md` §Unicode) | Remove. MicroPython's `str.upper`, `str.lower`, and `isalpha` and friends only handle ASCII. **Confirm on the oracle first** | Table area |
+| Unicode case and character classification above U+00FF | STRACC tables (`string_accel.md` §Unicode) | Remove. `str.upper`, `str.lower`, and `isalpha` and the related checks are ASCII-only, matching MicroPython | Table area |
 | `exec`/`eval` of CPython code objects, `SEED_CODE`, `bios()`, `_bi_heap_mark`, `_bi_code_mark` | firmware builtins and tools | Delete. GC is always on. `exec(str)` and `eval(str)` go through the new compiler, and compiled code lives in GC-managed buffers | Workarounds that only existed because GC was off |
 | Image build from host CPython | `image_from_source.py`, `preprocess.py`, `heap_image.py`, `exception_table.py`, `analyze_bytecode.py`, `measure_pycpython_opcodes.py`, `vendor/pycpython` | Replace with `mpy-cross` plus a flash-image tool. Reuse the `.mpy` reader in MicroPython's `tools/mpy-tool.py` and `tools/manifestfile.py` (MIT licence) | Most of the 18.7k lines in `pycore/tools` |
 | CPython cycle-ratio research tooling | `cpython_baseline/`, `research_compare.py`, `research_machines.*` | Replace with §4 | — |
@@ -373,6 +372,9 @@ If time runs out, the REPL ships with C2 scope.
   - `MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES`, the level ESP32, RP2, and STM32
     use
   - `MICROPY_ERROR_REPORTING_NORMAL` (ESP32's setting)
+  - `sys.platform` and `sys.implementation.name` both `upycore`. The unix
+    default is `linux` and `micropython`. The variant patches both so a
+    program that prints them matches the device
   - Built for 32-bit x86 with `CROSS_COMPILE=i686-linux-gnu-`. This is
     MicroPython's own CI recipe for the `longlong` variant. It gives 31-bit small
     ints and 32-bit object sizes, which `MemoryError` parity needs.
@@ -505,9 +507,7 @@ primary point is **(N, M) = (100, 100)**; add (50, 25) as a small-device point.
 
 ### 4.3 Reference devices
 
-Buy and flash official v1.29.0 firmware on each. On each board, record
-`machine.freq()` and `gc.mem_free()` after boot, and use those as the board's
-clock and M. Run with `run-perfbench.py -p -d <port> 100 100`.
+Do not buy boards. This core will not be manufactured for the comparison, so the fair result is the simulator against the unix oracle at the same heap. The table is context for published numbers only. Those numbers are not a gate.
 
 | Board | Core | SRAM | Notes |
 | --- | --- | --- | --- |
@@ -522,7 +522,7 @@ hardware,** published numbers are a sanity check only, not headline results:
 ArduSimple's table and scruss's January 2025 measurements used different
 firmware versions and harnesses.
 
-**Start this in week 1.** Measuring boards doesn't depend on our core.
+Do not start a board-measurement track. Week 1 builds the oracle and the simulator comparison.
 
 ### 4.4 What we report
 
@@ -731,13 +731,8 @@ Compare timing traces with the host register model.
    The import brought pycore's CI with it:
    - `.github/workflows/all-tests.yml` runs the full hardware matrix on every
      non-docs PR to `main`.
-   - `.github/workflows/gc-nightly.yml` runs a daily cron once it is on `main`. By
-     the workflow's own estimate, that is about 4.5 hours of runner time a night:
-     gc-long 17 minutes, single-core fuzz 80 minutes, two-core fuzz 3 hours.
-
-   Decide whether this repository keeps the nightly run before the
-   restructuring makes it meaningless: it tests the 16 MB CPython GC
-   configuration.
+   - `.github/workflows/gc-nightly.yml` no longer has a schedule. It tested
+     the 16 MB CPython GC. Run it by hand only if that configuration is needed.
 2. **One plan of record.** The Cursor draft (`micropython_mcu_plan.md`) and
    this plan disagree on six major points (§9). `planning/README.md` names this
    plan the plan of record, and the draft carries a note saying so. The phase
@@ -745,11 +740,10 @@ Compare timing traces with the host register model.
    `planning/mpy_review/merged_plan.md`. It follows D1–D7. Where a phase gate
    and a week exit meet, the merged plan's mapping table is the join. Keep a
    single roadmap, or agents will advance both at once.
-3. **REPL over UART.** The normal REPL, paste mode (Ctrl-E), and **raw REPL**
-   (Ctrl-A; Ctrl-D executes; "OK" responses; Ctrl-B leaves). `mpremote` and
-   Thonny use the raw REPL. With the simulator's UART exposed on a pty (through
-   a Verilator DPI), `mpremote connect /dev/pts/N run x.py` works against the
-   simulator. That makes a good demo and an interactive debugging path.
+3. **REPL over UART, later.** Not in this implementation. Programs are `.mpy`
+   from host `mpy-cross`. When the REPL returns: normal mode, paste mode
+   (Ctrl-E), and raw REPL (Ctrl-A; Ctrl-D executes; "OK" responses; Ctrl-B
+   leaves). `mpremote` and Thonny use the raw REPL.
 4. **Boot sequence and frozen manifest.** Use MicroPython's `manifest.py`
    (`freeze`, `module`, `require`) through `tools/manifestfile.py`. Boot runs
    `boot.py`, then `main.py`, then the REPL, as MicroPython does. The firmware
@@ -807,33 +801,32 @@ break.
 | **F: Front end** | Byte fetch; MicroPython decode of the integer subset; flash-image tool (reusing the `mpy-tool.py` reader) | Prelude decode for every function kind; qstr tables | — | — |
 | **X: Execution** | Calls with positional arguments, return | Defaults, closures, exception stack, trap→exception conversions, `MemoryError`/`OverflowError`, MicroPython dict order | Runtime `class`, `import`, `with`, binary32 float and formatting, `str.format` | `bytes`/`bytearray`/`struct` |
 | **M: Memory** | Microcontroller memory map; `UART_TX` print path; excore and caches out of the build | 32-bit payload and packed tag nibbles (§0.5) | Wide values and GC tracing of the nibble array in every container FSM | Measure density |
-| **C: Compiler** | C1 | C2 | C3 | C4 |
+| **C: Compiler** | Host `mpy-cross` only. No on-device compiler | — | — | — |
 | **T: Tests** | Oracle variant; expected-output pipeline; migration script | Migrate the 523 programs | Conformance dashboard | Every gate green |
 | **I: Interrupts** | — | IRQ controller design; GC roots | Timer, GPIO, UART RX; hard and soft delivery | `GC_REQ`, idle GC, Ctrl-C, latency |
-| **B: Benchmarks** | **Buy boards; run `perf_bench` on them** | `fannkuch`, `wordcount` on the simulator | `pystone`, `aes`, float tests; synthesis Fmax and area | Full report and figures |
-| **R: Product surface** | — | `gc`, `sys` | `machine`, `time`, `micropython` | REPL, raw REPL, `mpremote` |
+| **B: Benchmarks** | Oracle and simulator harness. No boards | `fannkuch`, `wordcount` on the simulator | `pystone`, `aes`, float tests; synthesis Fmax and area | Full report and figures |
+| **R: Product surface** | — | `gc`, `sys` (`platform` and `implementation.name` are `upycore`) | `machine`, `time`, `micropython` | UART `print`. No REPL |
 
 **End-of-week exit tests**
 
 | Week | Exit test |
 | --- | --- |
-| 1 | A `while` that adds two locals, a `print` of that sum, and a call match the oracle; `print(1+2)` is not the ALU test; board data is collected |
+| 1 | A `while` that adds two locals, a `print` of that sum, and a call match the oracle; `print(1+2)` is not the ALU test |
 | 2 | The exceptions, containers, and calls areas are green against the oracle; `bm_fannkuch` runs |
 | 3 | blink and echo pass; `misc_pystone` runs; the conformance pass rate is published |
 | 4 | Benchmark report and every gate |
 
 The buffer is Nov 11–13.
 
+Already out of this implementation: the on-device compiler, the REPL, physical boards, and the nightly GC soak.
+
 **Cut list, in order (cut the first item first):**
 
 1. Generators and `asyncio` (already a stretch goal)
-2. Raw REPL and `mpremote`
-3. Idle-time GC
-4. On-device compiler beyond C2
-5. Inline short strings, storing those strings as a heap pointer instead
+2. Idle-time GC
+3. Inline short strings, storing those strings as a heap pointer instead
 
-Never cut the oracle switch, exceptions as values, or the benchmark comparison
-against boards.
+Never cut the oracle switch, exceptions as values, the 32-bit payload, or the simulated comparison with the unix oracle.
 
 ---
 
@@ -865,7 +858,7 @@ CPython-hart work stays in pycore.
 | Cursor draft | This plan | Reason |
 | --- | --- | --- |
 | New core from scratch in a sibling `mpycore/` tree; nothing in `pycore/rtl` reused | Import pycore here and retarget it | The deadline (D1) |
-| No on-device compiler in v1 | Retarget the compiler; ship it as a frozen `.mpy` | Your requirement, and the REPL (D5) |
+| No on-device compiler in v1 | Still out of this implementation. Host `mpy-cross` emits the `.mpy`. The on-device compiler returns with the REPL | Owner decision (D5) |
 | Float and long ints off; 31-bit ints that raise `OverflowError` | binary32 float, 64-bit `LONGLONG` ints, `complex` kept | Binary32 matches ESP32 and RP2. Those boards use MPZ for ints; `LONGLONG` matches the existing ALU, and MPZ stays post-deadline. A 31-bit limit breaks `0xFFFFFFFF` register masks (D3) |
 | 32-bit `REPR_A` object word | 32-bit payload plus a 4-bit sideband tag. A 64-bit int or a complex uses the next register (§0.5) | Inline floats do not fit in a 32-bit word that also holds the tag. The tag sits beside the payload |
 | One schedule queue; all IRQs handled when the next bytecode is dispatched | Hard and soft classes, matching MicroPython's jump-point semantics; `GC_REQ` and idle GC | Matches MicroPython's behavior, and uses interrupts for GC |
