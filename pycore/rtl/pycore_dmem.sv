@@ -1,0 +1,47 @@
+`include "pycore_defs.svh"
+
+// Data memory bank wrapper (Harvard, read/write). Access granularity is one
+// 128-bit value per transaction in v1 (16-byte aligned); the MEM stage enforces
+// alignment before issuing a request.
+module pycore_dmem #(
+    parameter int    ADDR_WIDTH  = PYCORE_ADDR_WIDTH,
+    parameter int    DATA_WIDTH  = PYCORE_DMEM_DATA_WIDTH,
+    parameter int    BLOCK_SHIFT = PYCORE_BLOCK_SHIFT,
+    parameter int    BLOCK_COUNT = PYCORE_DMEM_BLOCK_COUNT,
+    parameter string INIT_HEX    = "",
+    parameter string PLUSARG     = "DMEM_HEX"
+) (
+    input  logic                  clk_i,
+    input  logic                  rst_n_i,
+    input  logic                  req_i,
+    input  logic                  we_i,
+    input  logic [DATA_WIDTH/8-1:0] wstrb_i,
+    input  logic [ADDR_WIDTH-1:0] addr_i,
+    input  logic [DATA_WIDTH-1:0] wdata_i,
+    output logic                  ack_o,
+    output logic [DATA_WIDTH-1:0] rdata_o,
+    output logic                  fault_o
+);
+
+    pycore_mem_bank #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .BLOCK_SHIFT(BLOCK_SHIFT),
+        .BLOCK_COUNT(BLOCK_COUNT),
+        .READ_ONLY(0),
+        .INIT_HEX(INIT_HEX),
+        .PLUSARG(PLUSARG)
+    ) bank (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .req_i(req_i),
+        .we_i(we_i),
+        .wstrb_i(wstrb_i),
+        .addr_i(addr_i),
+        .wdata_i(wdata_i),
+        .ack_o(ack_o),
+        .rdata_o(rdata_o),
+        .fault_o(fault_o)
+    );
+
+endmodule

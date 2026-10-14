@@ -1,5 +1,12 @@
 # MicroPython microcontroller core
 
+> **Superseded where it conflicts.** This repository now holds a copy of
+> pycore `43d791a` and retargets it in place, so it is no longer the separate
+> `mpycore/` tree this draft describes. Paths below that start with `pycore/`
+> are now paths in this repository. The plan of record is
+> [`micropython_pivot_plan.md`](micropython_pivot_plan.md), and its §9 lists
+> what it keeps from this draft and what it changes.
+
 Status: **plan, not started.** Audit snapshot: [pycore](https://github.com/ColtonHarris999/pycore) `main` @ `371dc007f9`, 2026-10-13.
 
 This file moved here from pycore branch `cursor/micropython-mcu-plan-3b27`

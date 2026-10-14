@@ -1,0 +1,900 @@
+"""Shared tagged-value encoding for PyCore tooling.
+
+Used by preprocess.py (legacy single-function path) and image_from_source.py
+(primary module-image path). Tag constants mirror pycore/rtl/pycore_defs.svh.
+"""
+
+from __future__ import annotations
+
+import struct
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+
+# Mirror the primary tag map in pycore/rtl/pycore_defs.svh.
+TAG_CONTROL = 0b0000
+TAG_INT = 0b0001
+TAG_FLOAT = 0b0010
+TAG_COMPLEX = 0b0011
+TAG_BOOL = 0b0100
+TAG_ITER = 0b0101
+TAG_TUPLE = 0b0110
+TAG_SHORT_STR = 0b0111
+TAG_LONG_STR = 0b1000
+TAG_MUT_COLLEC = 0b1001
+TAG_OBJECT = 0b1010
+TAG_RANGE = 0b1011
+TAG_BYTES = 0b1100
+TAG_CODE_OBJECT = 0b1101
+TAG_TOMBSTONE = 0b1110
+TAG_FROZENSET = 0b1111
+
+# Migration aliases retained by RTL and legacy iterator/preprocess paths.
+TAG_UNINIT = TAG_CONTROL
+TAG_UNINITIALIZED = TAG_UNINIT
+TAG_PTR = TAG_ITER
+
+# CONTROL secondary ids in value[3:0].
+CTL_UNINIT = 0
+CTL_NONE = 1
+CTL_NULL = 2
+
+# MUT_COLLEC secondary kinds in value[127:124].
+# Contamination bit lives in value[123]: set when the collection has ever
+# contained a TAG_OBJECT element (dicts: OBJECT keys only). Used to keep
+# bulk update/merge hashing on pycore when excore cannot hash OBJECTs.
+# FROZENSET (when live) uses the same value[123] convention.
+MUT_LIST = 1
+MUT_DICT = 2
+MUT_SET = 3
+MUT_BYTEARRAY = 4
+MUT_DEQUE = 5
+MUT_CONTAMINATED_BIT = 123
+
+SHORT_STR_MAX_BYTES = 15
+SHORT_STR_SIZE_SHIFT = 124
+SHORT_STR_DATA_SHIFT = 4
+STRING_MEM_BYTES = 65536
+STRING_RUNTIME_BASE = 16384
+
+VAL_WIDTH = 128
+VAL_MASK = (1 << VAL_WIDTH) - 1
+TAG_WIDTH = 4
+ENTRY_HEX_DIGITS = (TAG_WIDTH + VAL_WIDTH + 3) // 4  # ceil(132/4) == 33
+
+IMEM_SLOT_BITS = 64
+IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
+
+# Boot record occupies [BOOT_RECORD_ADDR, BOOT_RECORD_ADDR+BOOT_RECORD_BYTES).
+# HEAP_BASE is the first byte after that record so static/bump allocations never
+# overlap the three boot pairs (code / globals / builtins).
+BOOT_RECORD_ADDR = 0x03E0
+BOOT_RECORD_BYTES = 96
+HEAP_BASE = BOOT_RECORD_ADDR + BOOT_RECORD_BYTES  # 0x0440
+# Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below exc-info arena at 0xF00000).
+HEAP_LIMIT = 0xF00000
+# Exc-info stack arena (§5.5); last tagged entry holds the boot StopIteration latch.
+EXC_STACK_BASE = 0xF00000
+EXC_STACK_BYTES = 0x1000
+# Call-frame stack (mirror PYCORE_FRAME_STACK_* in pycore_defs.svh).
+FRAME_STACK_BASE = 0xF01000
+FRAME_STACK_BYTES = 0x8000
+# RF spill LIFO (mirror PYCORE_RF_SPILL_* in pycore_defs.svh).
+RF_SPILL_BASE = 0xF40000
+RF_SPILL_BYTES = 0x40000
+RF_DEPTH = 256
+RF_RESERVE = 16
+RF_SPILL_HYST = 32
+RF_INIT_CHUNK = 32
+RF_WINDOW_CAP = RF_DEPTH - RF_RESERVE
+# GC metadata (mirror PYCORE_GC_* in pycore_defs.svh; pycore/docs/gc.md).
+GC_META_BASE = 0xF80000
+GC_MARK_BITMAP = 0xF80000
+# Builtins values the prune map keeps; traced when the builtins dict is
+# premarked (32 tagged pairs, 32 B apart, in the unused mark-bitmap region).
+GC_EXTRA_ROOTS = GC_MARK_BITMAP
+GC_EXTRA_ROOTS_COUNT = 32
+GC_MARK_BITMAP_BYTES = 0x2000
+GC_ROOT_STASH = 0xF82000
+GC_ROOT_STASH_BYTES = 0x4000
+GC_STATS = 0xF86000
+GC_STATS_BYTES = 0x400
+# Image-provided descriptor for collector-time cleanup of the compiler's
+# runtime scratch slots.  The descriptor lives in the otherwise unused upper
+# part of GC_STATS; see pycore/docs/gc.md.
+GC_COMPILER_CLEANUP = GC_STATS + 0x100
+GC_COMPILER_CLEANUP_BYTES = 0x300
+GC_COMPILER_CLEANUP_MAGIC = 0x50594343  # "PYCC"
+GC_STATIC_MAP = 0xF86400
+GC_STATIC_MAP_BYTES = 0x2000
+GC_RUN_TABLE = 0xF88400
+GC_RUN_TABLE_BYTES = 0x37C00
+GC_MARK_STACK = 0xFC0000
+GC_MARK_STACK_BYTES = 0x30000
+GC_MARK_STACK_ENTRIES = 12288
+GC_RESCAN = 0xFF0000
+GC_RESCAN_BYTES = 0x10000
+GC_RESCAN_ENTRIES = 4096
+GC_SCAN_CHUNK = 128
+GC_GRANULE_BYTES = 16
+GC_BITMAP_WORDS = HEAP_LIMIT >> 11
+GC_FREE_MAGIC = 0x46524545
+GC_POISON_WORD = 0xDEAD6C00DEAD6C00DEAD6C00DEAD6C0F
+# Cache / RAM hierarchy (mirror pycore_defs.svh).
+CACHE_EN = 1
+LINE_BYTES = 64
+
+
+def align_line(addr: int, line: int = LINE_BYTES) -> int:
+    """Round ``addr`` up to a multiple of ``line`` (default ``LINE_BYTES``).
+
+    Mirrors ``pycore_align_line`` in ``pycore_defs.svh``. HeapImageBuilder
+    start-aligns every bump so 64-byte dict slots never straddle two lines.
+    """
+    if line <= 0 or (line & (line - 1)) != 0:
+        raise ValueError(f"line size must be a positive power of two, got {line}")
+    return (addr + line - 1) & ~(line - 1)
+
+
+def heap_place(ptr: int, nbytes: int, line: int = LINE_BYTES) -> int:
+    """First byte of an allocation of ``nbytes`` at ``ptr``.
+
+    Mirrors ``pycore_heap_place``: payloads of ``LINE_BYTES`` or more
+    start-align; smaller ones pack.
+    """
+    if nbytes >= line:
+        return align_line(ptr, line)
+    return ptr
+
+
+def heap_end(ptr: int, nbytes: int, line: int = LINE_BYTES) -> int:
+    """First free byte after placing ``nbytes`` at ``heap_place(ptr, nbytes)``."""
+    return heap_place(ptr, nbytes, line) + nbytes
+
+
+# String Accelerator ops / handle (pycore/docs/string_accel.md).
+# Kind encoding: 1/2/4-byte units stored as 0/1/2 in bits [121:120].
+SA_CONCAT = 0
+SA_REPEAT = 1
+SA_SLICE = 2
+SA_PAD = 3
+SA_CMP = 4
+SA_SEARCH = 5
+SA_HASH = 6
+SA_CHAR_AT = 7
+SA_ITER_NEXT = 8
+SA_REPLACE = 9
+SA_JOIN = 10
+SA_TRIM = 11
+SA_CLASSIFY = 12
+SA_MAP = 13
+SA_SPLIT = 14
+SA_AFFIX = 15
+SA_ZFILL = 16
+SA_EXPANDTABS = 17
+SA_ORD = 18
+SA_CHR = 19
+
+SA_SPLIT_FWD = 0
+SA_SPLIT_REV = 1
+SA_SPLIT_LINES = 2
+SA_SPLIT_PARTITION = 3
+SA_SPLIT_RPARTITION = 4
+
+SA_FIND = 0
+SA_RFIND = 1
+SA_COUNT = 2
+SA_CONTAINS = 3
+SA_STARTSWITH = 4
+SA_ENDSWITH = 5
+
+SA_PAD_LEFT = 0   # rjust
+SA_PAD_RIGHT = 1  # ljust
+SA_PAD_BOTH = 2   # center
+
+SA_TRIM_LEFT = 0
+SA_TRIM_RIGHT = 1
+SA_TRIM_BOTH = 2
+
+SA_IS_ALNUM = 0
+SA_IS_ALPHA = 1
+SA_IS_ASCII = 2
+SA_IS_DIGIT = 3
+SA_IS_LOWER = 4
+SA_IS_SPACE = 5
+SA_IS_UPPER = 6
+SA_IS_PRINTABLE = 7
+SA_IS_TITLE = 8
+SA_IS_DECIMAL = 9
+SA_IS_NUMERIC = 10
+
+SA_MAP_UPPER = 0
+SA_MAP_LOWER = 1
+SA_MAP_SWAPCASE = 2
+SA_MAP_CAPITALIZE = 3
+SA_MAP_TITLE = 4
+SA_MAP_CASEFOLD = 5
+
+SA_AFFIX_PREFIX = 0
+SA_AFFIX_SUFFIX = 1
+
+STRACC_KIND_ENC_1 = 0
+STRACC_KIND_ENC_2 = 1
+STRACC_KIND_ENC_4 = 2
+STRACC_FLAG_INTERNED = 1 << 0
+STRACC_FLAG_ALL_LOWER = 1 << 1
+STRACC_FLAG_ALL_UPPER = 1 << 2
+STRACC_FNV_OFFSET = 0x811C9DC5
+STRACC_FNV_PRIME = 0x01000193
+
+L1I_SIZE_BYTES = 8192
+L1I_WAYS = 4
+L1I_HIT_CYCLES = 1
+L1D_SIZE_BYTES = 8192
+L1D_WAYS = 4
+L2_SIZE_BYTES = 131072
+L2_WAYS = 8
+RAM_BYTES = 16 * 1024 * 1024
+RAM_T_FIRST = 30
+RAM_T_BEAT = 2
+RAM_T_FIRST_CI = 4
+# Unified L2/RAM code namespace (memory_system_plan.md §2). Fetch still
+# uses Harvard slot addresses; the xbar adds this base so code and data
+# never alias in the unified cache.
+CODE_ADDR_BASE = 0x01000000
+L1D_HIT_CYCLES = 1
+# L2 hit latency from the memory-system target table.
+L2_HIT_CYCLES = 8
+DMEM_BYTES = 4096 * 4096  # PYCORE_DMEM_BLOCK_COUNT << BLOCK_SHIFT (16 MB)
+CODC_ENTRIES = 4
+CODC_WAYS = 2
+CODC_PAYLOAD_W = 576
+GIC_ENTRIES = 16
+GIC_WAYS = 2
+GIC_KEY_W = 48
+GIC_PAYLOAD_W = 132  # TAG_WIDTH + VAL_WIDTH; pycore_make_entry packing
+# P8 skipped: L1D frame-region hit rate after P3 is 99.58% / 95.29%
+# on img_recursion / img_deep_callgraph (gate was >95%).
+FTB_FRAMES = 4
+ITER_EXHAUST_TYPE_ADDR = EXC_STACK_BASE + EXC_STACK_BYTES - 32  # 0xF00FE0
+# Native method CODE_OBJECT table (16 × 32 B tagged entries) immediately
+# below the StopIteration sidecar. LOAD_ATTR indexes this instead of
+# allocating a bound builtin per lookup (object_model.md D4).
+NATIVE_METHOD_COUNT = 16
+NATIVE_METHOD_ENTRY_BYTES = 32
+NATIVE_METHOD_TABLE_BYTES = NATIVE_METHOD_COUNT * NATIVE_METHOD_ENTRY_BYTES
+NATIVE_METHOD_TABLE_ADDR = ITER_EXHAUST_TYPE_ADDR - NATIVE_METHOD_TABLE_BYTES  # 0xF00DE0
+# Tagged handle for the preallocated MemoryError singleton.  Images that do
+# not name MemoryError leave this sidecar zero, preserving their static heap.
+MEMORY_ERROR_INSTANCE_ADDR = NATIVE_METHOD_TABLE_ADDR - 32  # 0xF00DC0
+
+# LIST element buffer stride (bytes); mirror pycore list layout (32B/element).
+LIST_ELEMENT_BYTES = 32
+# Minimum / maximum word capacities for allocator_list (_zeros needs % 16 == 0).
+# Min must cover prologue + managed_entry (alloc 2/4/2/8) when CHUNKSIZE is 4.
+# Do not floor the *computed* capacity at MIN: that OOM'd after native-method
+# firmware raised HEAP_INIT_PTR. P1 alignment of ≥64 B payloads leaves ~2.7 KB
+# of bump heap, which at 4× slack yields 16 words.
+ALLOCATOR_LIST_CAPACITY_MIN = 16
+ALLOCATOR_LIST_CAPACITY_MAX = 4096
+
+
+def allocator_list_capacity(available_bytes: int) -> int:
+    """Safe list-word capacity for ``allocator_list`` under a live heap budget.
+
+    Callers should pass ``HEAP_LIMIT - HEAP_INIT_PTR`` (runtime bump headroom
+    after the static image).  Each word becomes one LIST cell (32 B); LIST_EXTEND
+    grow may briefly need ~2× the final buffer, and we keep additional slack so
+    the Allocator object and temporaries still fit (modelled as 4×).  Result is
+    a multiple of 16 for ``_zeros``.  May be 0 when the budget is too small;
+    ``apply_heap_list_capacity_inject`` rejects anything below
+    ``ALLOCATOR_LIST_CAPACITY_MIN``.
+    """
+    if available_bytes <= 0:
+        return 0
+    # 32 B/cell × 4 ≈ cell + grow peak + object/slack.
+    words = available_bytes // (LIST_ELEMENT_BYTES * 4)
+    words = (words // 16) * 16
+    if words > ALLOCATOR_LIST_CAPACITY_MAX:
+        return ALLOCATOR_LIST_CAPACITY_MAX
+    return words
+
+# Code-object field indices (tuple-element convention at code addr).
+CODE_FIELD_ENTRY_SLOT = 0
+CODE_FIELD_CO_CONSTS = 1
+CODE_FIELD_CO_NAMES = 2
+CODE_FIELD_METADATA = 3
+CODE_FIELD_CO_DEFAULTS = 4
+CODE_FIELD_CO_VARNAMES = 5
+CODE_FIELD_CO_KWDEFAULTS = 6
+CODE_FIELD_CO_EXCEPTIONTABLE = 7
+CODE_OBJECT_NFIELDS = 8
+CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 256
+
+# General OBJECT kinds under TAG_OBJECT (mirror PY_OBK_* in pycore_defs.svh).
+OBK_INSTANCE = 1
+OBK_TYPE = 2
+OBK_BOUND_METHOD = 3
+OBK_BUILTIN = 4
+OBK_BYTEARRAY = 5
+OBK_EXCEPTION = 6
+OBK_CELL = 7
+OBK_FUNCTION = 8
+
+# OBK_TYPE ob_flags bit 0: seeded exception type (CALL → OBK_EXCEPTION, Track 2).
+OB_FLAG_EXC_TYPE = 1
+# OBK_TYPE ob_flags bit 1: seeded `int` type (CALL converts, not INSTANCE).
+OB_FLAG_INT_TYPE = 2
+# OBK_TYPE ob_flags bit 2: seeded `str` type (CALL stringifies, not INSTANCE).
+OB_FLAG_STR_TYPE = 4
+
+# Builtin ids under OBK_BUILTIN (mirror PY_BI_* in pycore_defs.svh).
+BI_STATICMETHOD = 0
+BI_BYTEARRAY = 1
+BI_FROM_BYTES = 2
+BI_TO_BYTES = 3
+BI_MAX = 4
+# id 5 is reserved: it once labelled `list.append`, which is handled as the
+# LIST_APPEND opcode (`PY_OP_LIST_APPEND` / `CONT_LIST_APPEND`) and never as
+# an OBK_BUILTIN. Do not reassign without regenerating every boot image.
+BI_PRINT = 6
+BI_LEN = 7
+BI_RANGE = 8
+BI_SET = 9
+BI_ORD = 10
+BI_CHR = 11
+BI_HEAP_MARK = 12
+BI_HEAP_RELEASE = 13
+BI_CODE_MARK = 14
+BI_CODE_RELEASE = 15
+BI_EXEC_GLOBALS = 16
+# Runtime code-RAM writers (compiler_design.md R-5).
+BI_CODE_ALLOC = 17
+BI_CODE_BLIT = 18
+BI_CODE_PATCH = 19
+BI_CODE_NEW = 20
+BI_CODE_KIND = 21
+BI_GC_COLLECT = 22
+BI_HEAP_FREE = 23
+BI_GC_STATS = 24
+BI_COMPLEX = 25
+BI_CABS = 26
+
+# Code address space (mirror pycore_defs.svh PYCORE_CODE_RAM_*).
+# The ROM holds IMEM_BLOCK_COUNT * 4096 / 8 slots; code RAM starts right after.
+CODE_RAM_SLOT_BASE = 0x2000
+CODE_RAM_SLOTS = 0x20000
+CODE_RAM_SLOT_LIMIT = CODE_RAM_SLOT_BASE + CODE_RAM_SLOTS
+CODE_RAM_BYTE_BASE = CODE_RAM_SLOT_BASE << 3
+
+OBJ_HDR_BYTES = 32
+OBJ_INSTANCE_BYTES = 64
+OBJ_TYPE_BYTES = 128
+OBJ_BOUND_METHOD_BYTES = 96
+OBJ_BUILTIN_BYTES = 96
+OBJ_BYTEARRAY_BYTES = 128
+OBJ_EXCEPTION_BYTES = 96
+OBJ_CELL_BYTES = 64
+OBJ_FUNCTION_BYTES = 96
+
+
+def pack_ob_head(kind: int, flags: int = 0, type_addr: int = 0) -> int:
+    """Pack ob_head: [127:96]=kind, [95:64]=flags, [63:0]=type_addr."""
+    return (
+        ((kind & 0xFFFFFFFF) << 96)
+        | ((flags & 0xFFFFFFFF) << 64)
+        | (type_addr & ((1 << 64) - 1))
+    )
+
+
+def ob_kind(head: int) -> int:
+    return (head >> 96) & 0xFFFFFFFF
+
+
+def ob_flags(head: int) -> int:
+    return (head >> 64) & 0xFFFFFFFF
+
+
+def ob_type(head: int) -> int:
+    return head & ((1 << 64) - 1)
+
+
+def obj_field_val_addr(obj: int, i: int) -> int:
+    """Byte address of field *i* value (header occupies stride index 0)."""
+    return obj + (i + 1) * 32
+
+
+def obj_field_tag_addr(obj: int, i: int) -> int:
+    return obj_field_val_addr(obj, i) + 16
+
+
+def float_bits(value: float) -> int:
+    return struct.unpack(">Q", struct.pack(">d", value))[0]
+
+
+def make_control(ctl: int) -> tuple[int, int]:
+    """Return a CONTROL entry with the secondary id in value[3:0]."""
+    return TAG_CONTROL, ctl & 0xF
+
+
+def make_uninit() -> tuple[int, int]:
+    return make_control(CTL_UNINIT)
+
+
+def make_none() -> tuple[int, int]:
+    return make_control(CTL_NONE)
+
+
+def make_null() -> tuple[int, int]:
+    return make_control(CTL_NULL)
+
+
+UNINIT_ENTRY = make_uninit()
+NONE_ENTRY = make_none()
+NULL_ENTRY = make_null()
+
+
+def make_mut(kind: int, addr: int, contaminated: bool = False) -> tuple[int, int]:
+    """Return a MUT_COLLEC handle: kind[127:124], contam[123], addr[63:0]."""
+    value = ((kind & 0xF) << 124) | (addr & ((1 << 64) - 1))
+    if contaminated:
+        value |= 1 << MUT_CONTAMINATED_BIT
+    return TAG_MUT_COLLEC, value
+
+
+def make_list(addr: int, contaminated: bool = False) -> tuple[int, int]:
+    return make_mut(MUT_LIST, addr, contaminated)
+
+
+def make_dict(addr: int, contaminated: bool = False) -> tuple[int, int]:
+    return make_mut(MUT_DICT, addr, contaminated)
+
+
+def make_set(addr: int, contaminated: bool = False) -> tuple[int, int]:
+    return make_mut(MUT_SET, addr, contaminated)
+
+
+def make_bytearray(addr: int, contaminated: bool = False) -> tuple[int, int]:
+    return make_mut(MUT_BYTEARRAY, addr, contaminated)
+
+
+def mut_kind(value: int) -> int:
+    return (value >> 124) & 0xF
+
+
+def mut_contaminated(value: int) -> bool:
+    return bool((value >> MUT_CONTAMINATED_BIT) & 1)
+
+
+def mut_addr(value: int) -> int:
+    return value & ((1 << 64) - 1)
+
+
+def mut_with_contam(value: int, contaminated: bool = True) -> int:
+    """Return MUT_COLLEC value with contamination bit set or cleared."""
+    if contaminated:
+        return value | (1 << MUT_CONTAMINATED_BIT)
+    return value & ~(1 << MUT_CONTAMINATED_BIT)
+
+
+def is_mut_kind(entry: tuple[int, int], kind: int) -> bool:
+    return entry[0] == TAG_MUT_COLLEC and mut_kind(entry[1]) == (kind & 0xF)
+
+
+def make_complex(real: float, imag: float = 0) -> tuple[int, int]:
+    """Encode complex(real, imag) as two IEEE754 binary64 bit patterns."""
+    return TAG_COMPLEX, (float_bits(imag) << 64) | float_bits(real)
+
+
+I32_MIN = -(1 << 31)
+I32_MAX = (1 << 31) - 1
+
+
+def range_fits_inline(value: range) -> bool:
+    return all(I32_MIN <= part <= I32_MAX for part in (
+        value.start, value.stop, value.step
+    ))
+
+
+def make_range_inline(start: int, stop: int, step: int = 1) -> tuple[int, int]:
+    """Encode a RANGE inline as signed i32 start/stop/step in value[95:0]."""
+    if not all(I32_MIN <= part <= I32_MAX for part in (start, stop, step)):
+        raise ValueError("inline range start/stop/step must fit signed i32")
+    if step == 0:
+        raise ValueError("range() arg 3 must not be zero")
+    value = (
+        ((start & 0xFFFF_FFFF) << 64)
+        | ((stop & 0xFFFF_FFFF) << 32)
+        | (step & 0xFFFF_FFFF)
+    )
+    return TAG_RANGE, value
+
+
+def make_range_tuple(addr: int) -> tuple[int, int]:
+    """Encode a RANGE whose start/stop/step tuple lives at a heap address."""
+    return TAG_RANGE, (1 << 127) | (addr & ((1 << 64) - 1))
+
+
+def encode_short_string(data: bytes) -> int:
+    """Encode a ≤15-byte UTF-8 string into the SHORT_STR value field."""
+    if len(data) > SHORT_STR_MAX_BYTES:
+        raise ValueError("short string max 15 bytes")
+    payload = 0
+    for idx, byte in enumerate(data):
+        shift = SHORT_STR_DATA_SHIFT + (SHORT_STR_MAX_BYTES - 1 - idx) * 8
+        payload |= int(byte) << shift
+    payload |= (len(data) & 0xF) << SHORT_STR_SIZE_SHIFT
+    return payload
+
+
+def decode_short_string(value: int) -> bytes:
+    """Inverse of encode_short_string."""
+    n = (value >> SHORT_STR_SIZE_SHIFT) & 0xF
+    out = bytearray()
+    for idx in range(n):
+        shift = SHORT_STR_DATA_SHIFT + (SHORT_STR_MAX_BYTES - 1 - idx) * 8
+        out.append((value >> shift) & 0xFF)
+    return bytes(out)
+
+
+def stracc_kind_of_text(text: str) -> int:
+    """Return 1, 2 or 4 from the maximum code point (CPython unicode kind)."""
+    if not text:
+        return 1
+    mx = max(ord(c) for c in text)
+    if mx <= 0xFF:
+        return 1
+    if mx <= 0xFFFF:
+        return 2
+    return 4
+
+
+def stracc_kind_width(kind: int) -> int:
+    if kind not in (1, 2, 4):
+        raise ValueError(f"invalid str kind {kind}")
+    return kind
+
+
+def stracc_kind_enc(kind: int) -> int:
+    return {1: STRACC_KIND_ENC_1, 2: STRACC_KIND_ENC_2, 4: STRACC_KIND_ENC_4}[kind]
+
+
+def stracc_kind_from_enc(enc: int) -> int:
+    return {STRACC_KIND_ENC_1: 1, STRACC_KIND_ENC_2: 2, STRACC_KIND_ENC_4: 4}[enc]
+
+
+def stracc_encode_units(text: str, kind: int | None = None) -> bytes:
+    """Fixed-width little-endian code units for ``text``."""
+    if kind is None:
+        kind = stracc_kind_of_text(text)
+    width = stracc_kind_width(kind)
+    return b"".join(int.to_bytes(ord(ch), width, "little") for ch in text)
+
+
+def stracc_decode_units(payload: bytes, kind: int) -> str:
+    width = stracc_kind_width(kind)
+    if len(payload) % width:
+        raise ValueError("payload length is not a multiple of kind")
+    chars = []
+    for i in range(0, len(payload), width):
+        chars.append(chr(int.from_bytes(payload[i:i + width], "little")))
+    return "".join(chars)
+
+
+def stracc_content_hash(payload: bytes) -> int:
+    """FNV-1a 32-bit over payload bytes. Shared by the model and RTL."""
+    h = STRACC_FNV_OFFSET
+    for b in payload:
+        h ^= b
+        h = (h * STRACC_FNV_PRIME) & 0xFFFFFFFF
+    return h
+
+
+def stracc_case_flags(units: list[int]) -> int:
+    """ALL_LOWER / ALL_UPPER hints for Latin-1 code units."""
+    flags = STRACC_FLAG_ALL_LOWER | STRACC_FLAG_ALL_UPPER
+    for u in units:
+        if u > 0xFF:
+            return 0
+        if (0x41 <= u <= 0x5A) or (0xC0 <= u <= 0xD6) or (0xD8 <= u <= 0xDE):
+            flags &= ~STRACC_FLAG_ALL_LOWER
+        if (0x61 <= u <= 0x7A) or (0xDF <= u <= 0xF6) or (0xF8 <= u <= 0xFF):
+            flags &= ~STRACC_FLAG_ALL_UPPER
+    return flags
+
+
+def stracc_pack_long_handle(
+    addr: int,
+    nchars: int,
+    nbytes: int,
+    kind: int,
+    digest: int,
+    flags: int = 0,
+) -> int:
+    """Pack the §3.2 LONG_STR handle."""
+    enc = stracc_kind_enc(kind) & 3
+    return (
+        (addr & 0xFFFFFFFF)
+        | ((nchars & 0xFFFFFFFF) << 32)
+        | ((digest & 0xFFFFFFFF) << 64)
+        | ((nbytes & 0xFFFFFF) << 96)
+        | (enc << 120)
+        | ((flags & 0x3F) << 122)
+    )
+
+
+def stracc_pack_header(
+    nchars: int,
+    nbytes: int,
+    kind: int,
+    digest: int,
+    flags: int = 0,
+) -> int:
+    """§3.3 object header: same as the handle with addr replaced by 0."""
+    return stracc_pack_long_handle(0, nchars, nbytes, kind, digest, flags)
+
+
+def stracc_unpack_long_handle(value: int) -> dict[str, int]:
+    enc = (value >> 120) & 3
+    return {
+        "addr": value & 0xFFFFFFFF,
+        "nchars": (value >> 32) & 0xFFFFFFFF,
+        "hash": (value >> 64) & 0xFFFFFFFF,
+        "nbytes": (value >> 96) & 0xFFFFFF,
+        "kind": stracc_kind_from_enc(enc),
+        "flags": (value >> 122) & 0x3F,
+    }
+
+
+# Alias used by heap_image.py
+encode_short_str = encode_short_string
+
+
+def int_value(n: int) -> int:
+    return n & VAL_MASK
+
+
+def format_imem_slot(opcode: int, arg: int = 0) -> str:
+    """One 8-byte imem slot: bits[39:8]=arg, bits[7:0]=opcode."""
+    word = ((arg & 0xFFFFFFFF) << 8) | (opcode & 0xFF)
+    return f"{word:0{IMEM_SLOT_HEX_DIGITS}x}"
+
+
+def tag_constant(
+    value: object,
+    heap: object | None = None,
+    *,
+    allow_containers: bool = False,
+) -> tuple[int, int]:
+    """Encode a Python scalar/string/range constant as (tag, value128).
+
+    Strings go through ``heap.alloc_str`` (HeapImageBuilder) so SHORT vs LONG
+    follows the STRACC canonical invariant (kind-1 and nchars<=15). Callers
+    without a heap may only encode kind-1 strings that fit in SHORT_STR.
+
+    When allow_containers is False (preprocess legacy path), tuple/list/dict
+    constants raise. The image builder serializes containers itself and does
+    not call this for those types. This helper has no object-heap allocator,
+    so ranges are inline-only; callers with a HeapImageBuilder must allocate
+    an out-of-i32 (start, stop, step) tuple and use make_range_tuple().
+    """
+    if isinstance(value, bool):
+        return TAG_BOOL, int(value)
+    if isinstance(value, int):
+        return TAG_INT, value & VAL_MASK
+    if isinstance(value, float):
+        return TAG_FLOAT, float_bits(value)
+    if isinstance(value, complex):
+        return make_complex(value.real, value.imag)
+    if isinstance(value, str):
+        if heap is not None and hasattr(heap, "alloc_str"):
+            return heap.alloc_str(value)
+        kind = stracc_kind_of_text(value)
+        if kind == 1 and len(value) <= SHORT_STR_MAX_BYTES:
+            return TAG_SHORT_STR, encode_short_string(
+                stracc_encode_units(value, kind)
+            )
+        raise ValueError(
+            "long or wide string constants require HeapImageBuilder.alloc_str"
+        )
+    if value is None:
+        return make_none()
+    if isinstance(value, range):
+        if not range_fits_inline(value):
+            raise ValueError(
+                "range constant does not fit inline signed i32 fields; "
+                "serialize it with a heap tuple"
+            )
+        return make_range_inline(value.start, value.stop, value.step)
+    if isinstance(value, tuple):
+        if not allow_containers:
+            raise ValueError(
+                "tuple constants require the static heap image builder — not yet supported"
+            )
+        raise ValueError("tuple constants must be serialized via HeapImageBuilder")
+    if isinstance(value, (list, dict, set, frozenset)):
+        raise ValueError(
+            f"{type(value).__name__} constants require the static heap image "
+            "builder — not yet supported"
+        )
+    return TAG_OBJECT, 0
+
+
+def pack_code_metadata(
+    stacksize: int,
+    nlocals: int,
+    argcount: int,
+    kwonlyargcount: int = 0,
+    varargs: bool = False,
+    varkeywords: bool = False,
+    posonlyargcount: int = 0,
+) -> int:
+    """Pack code metadata fields into value[81:0].
+
+    Bits [15:0]=argcount, [31:16]=nlocals, [47:32]=stacksize,
+    [63:48]=kwonlyargcount, [64]=CO_VARARGS, [65]=CO_VARKEYWORDS,
+    [81:66]=posonlyargcount.
+    """
+    return (
+        ((posonlyargcount & 0xFFFF) << 66)
+        | ((1 if varkeywords else 0) << 65)
+        | ((1 if varargs else 0) << 64)
+        | ((kwonlyargcount & 0xFFFF) << 48)
+        | ((stacksize & 0xFFFF) << 32)
+        | ((nlocals & 0xFFFF) << 16)
+        | (argcount & 0xFFFF)
+    )
+
+
+def unpack_code_metadata(
+    meta: int,
+) -> tuple[int, int, int, int, bool, bool, int]:
+    """Return ``(stacksize, nlocals, argcount, kwonlyargcount, varargs,
+    varkeywords, posonlyargcount)``.
+    """
+    return (
+        (meta >> 32) & 0xFFFF,
+        (meta >> 16) & 0xFFFF,
+        meta & 0xFFFF,
+        (meta >> 48) & 0xFFFF,
+        bool((meta >> 64) & 1),
+        bool((meta >> 65) & 1),
+        (meta >> 66) & 0xFFFF,
+    )
+
+
+def next_pow2(n: int) -> int:
+    if n <= 1:
+        return 1
+    p = 1
+    while p < n:
+        p <<= 1
+    return p
+
+
+def dict_slot_count_for_stores(n_names: int) -> int:
+    """Pre-size globals dict: next_pow2(max(4, 2 * count))."""
+    return next_pow2(max(4, 2 * max(n_names, 0)))
+
+
+def _float_key_hash(bits: int) -> int:
+    """IEEE754 binary64 hash matching pycore_dict_key_hash FLOAT path.
+
+    integer-valued / ±0 → same as INT (incl. -1.0 → -2);
+    NaN/Inf/non-integer/overflow → low32 ^ high32 bit-mix.
+    """
+    bits &= (1 << 64) - 1
+    sign = (bits >> 63) & 1
+    exp = (bits >> 52) & 0x7FF
+    frac = bits & ((1 << 52) - 1)
+    mix = ((bits & 0xFFFFFFFF) ^ ((bits >> 32) & 0xFFFFFFFF)) & 0xFFFFFFFF
+    if exp == 0x7FF:
+        return mix
+    if exp == 0 and frac == 0:
+        return 0
+    if exp < 1023:
+        return mix
+    uexp = exp - 1023
+    if uexp >= 63:
+        return mix
+    sig = (1 << 52) | frac
+    if uexp < 52:
+        frac_mask = (1 << (52 - uexp)) - 1
+        if frac & frac_mask:
+            return mix
+        mag = sig >> (52 - uexp)
+    else:
+        mag = sig << (uexp - 52)
+    if not sign:
+        return mag & 0xFFFFFFFF
+    if mag == 1:
+        return 0xFFFFFFFE
+    return (-mag) & 0xFFFFFFFF
+
+
+def dict_key_hash(tag: int, value: int) -> int:
+    """Mirror of pycore_dict_key_hash — returns unmasked 32-bit hash.
+
+    INT: -1 → 0xFFFFFFFE (-2); else value[31:0].
+    BOOL: value[0] as 0/1.
+    FLOAT: integer-valued / ±0 match int; else bit-mix.
+    SHORT_STR: XOR of four 32-bit words.
+    LONG_STR: cached content hash in value[95:64].
+    """
+    value &= VAL_MASK
+    if tag == TAG_INT:
+        low64 = value & ((1 << 64) - 1)
+        if low64 == (1 << 64) - 1:
+            return 0xFFFFFFFE
+        return value & 0xFFFFFFFF
+    if tag == TAG_BOOL:
+        return value & 1
+    if tag == TAG_FLOAT:
+        return _float_key_hash(value & ((1 << 64) - 1))
+    if tag == TAG_SHORT_STR:
+        w0 = value & 0xFFFFFFFF
+        w1 = (value >> 32) & 0xFFFFFFFF
+        w2 = (value >> 64) & 0xFFFFFFFF
+        w3 = (value >> 96) & 0xFFFFFFFF
+        return (w0 ^ w1 ^ w2 ^ w3) & 0xFFFFFFFF
+    if tag == TAG_LONG_STR:
+        # §3.2 handle: content hash lives at [95:64].
+        return (value >> 64) & 0xFFFFFFFF
+    return value & 0xFFFFFFFF
+
+
+def _float_as_int64(bits: int) -> int | None:
+    """Mirror of pycore_float_as_int64; None if not integer-valued."""
+    bits &= (1 << 64) - 1
+    sign = (bits >> 63) & 1
+    exp = (bits >> 52) & 0x7FF
+    frac = bits & ((1 << 52) - 1)
+    if exp == 0x7FF:
+        return None
+    if exp == 0 and frac == 0:
+        return 0
+    if exp < 1023:
+        return None
+    uexp = exp - 1023
+    if uexp >= 63:
+        return None
+    sig = (1 << 52) | frac
+    if uexp < 52:
+        frac_mask = (1 << (52 - uexp)) - 1
+        if frac & frac_mask:
+            return None
+        mag = sig >> (52 - uexp)
+    else:
+        mag = sig << (uexp - 52)
+    if mag >= (1 << 63):
+        return None
+    return -mag if sign else mag
+
+
+def dict_key_rich_eq(tag_a: int, val_a: int, tag_b: int, val_b: int) -> bool:
+    """Mirror of pycore_dict_key_rich_eq."""
+    val_a &= VAL_MASK
+    val_b &= VAL_MASK
+    numeric = {TAG_INT, TAG_BOOL, TAG_FLOAT}
+    if tag_a in numeric and tag_b in numeric:
+        def as_int(tag: int, val: int) -> int | None:
+            if tag == TAG_INT:
+                return val & ((1 << 64) - 1)
+            if tag == TAG_BOOL:
+                return val & 1
+            return _float_as_int64(val)
+
+        ia, ib = as_int(tag_a, val_a), as_int(tag_b, val_b)
+        if ia is not None and ib is not None:
+            return ia == ib
+        if tag_a == TAG_FLOAT and tag_b == TAG_FLOAT:
+            return val_a == val_b
+        return False
+    if tag_a == tag_b == TAG_SHORT_STR:
+        return val_a == val_b
+    if tag_a == tag_b == TAG_LONG_STR:
+        return (val_a & 0xFFFFFFFF) == (val_b & 0xFFFFFFFF)
+    if tag_a == tag_b == TAG_CONTROL:
+        return (val_a & 0xF) == (val_b & 0xF)
+    return False
