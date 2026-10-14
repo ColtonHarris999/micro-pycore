@@ -64,10 +64,6 @@ localparam int MPY_SPAN_COMPLEX   = 2;
 localparam int MPY_SPAN_SHORT_STR = 4;
 localparam int MPY_SHORT_STR_MAX_BYTES = 15;
 
-localparam int MPY_RF_DEPTH  = 64;
-localparam int MPY_RF_ADDR_W = $clog2(MPY_RF_DEPTH);
-localparam int MPY_FRAME_DEPTH = 32;
-
 // Eight tags fill one 32-bit word. Lane 0 is bits [3:0].
 localparam int MPY_TAGS_PER_WORD = 8;
 
@@ -96,20 +92,9 @@ localparam int MPY_FLASH_TAG_WORDS = MPY_FLASH_WORDS / MPY_TAGS_PER_WORD;
 localparam int MPY_MMIO_WORDS      = 1024;
 localparam int MPY_SIM_WORDS       = 64;
 
-// Frame reserve is 16 KB for 32 frames: payload words, packed tag nibbles,
-// and a 16-byte header, at a 512-byte stride.
+// Frame stack: variable-size records back to back (pycore/docs/mpy_core.md).
 localparam logic [31:0] MPY_FRAME_RESERVE_BASE  = MPY_SRAM_BASE;
-localparam logic [31:0] MPY_FRAME_RESERVE_BYTES = 32'h0000_4000; // 16 KB
-localparam int MPY_FRAME_STRIDE        = 512;
-localparam int MPY_FRAME_PAYLOAD_BYTES = 256; // 64 x 4
-localparam int MPY_FRAME_TAG_OFFSET    = 256;
-localparam int MPY_FRAME_TAG_BYTES     = 32;  // 8 packed words
-localparam int MPY_FRAME_HEADER_OFFSET = 288;
-localparam int MPY_FRAME_HEADER_BYTES  = 16;
-localparam int MPY_FRAME_HDR_PC        = 0;
-localparam int MPY_FRAME_HDR_NSTATE    = 1;
-localparam int MPY_FRAME_HDR_INDEX     = 2;
-localparam int MPY_FRAME_HDR_ZERO      = 3;
+localparam logic [31:0] MPY_FRAME_RESERVE_BYTES = 32'h0000_8000; // 32 KB
 
 // Schedule ring (depth 8) then the handler table, then the GC pool.
 localparam int MPY_SCHED_DEPTH       = 8;
@@ -129,7 +114,11 @@ localparam int MPY_HANDLER_USED_BYTES  = MPY_IRQ_NSOURCES * MPY_HANDLER_ENTRY_WO
 localparam logic [31:0] MPY_HANDLER_BASE  = MPY_SCHED_BASE + MPY_SCHED_BYTES;
 localparam logic [31:0] MPY_HANDLER_BYTES = 32'h0000_0040; // 64 B window, 48 B used
 
-localparam logic [31:0] MPY_GC_POOL_BASE  = MPY_HANDLER_BASE + MPY_HANDLER_BYTES;
+// System roots (32 words) and the argument staging buffer (256 words)
+// follow the handler table; pycore/tools/mpy_abi.py is the source.
+localparam logic [31:0] MPY_SYSROOT_BASE  = MPY_HANDLER_BASE + MPY_HANDLER_BYTES;
+localparam logic [31:0] MPY_ARGBUF_BASE   = MPY_SYSROOT_BASE + 32'h80;
+localparam logic [31:0] MPY_GC_POOL_BASE  = MPY_ARGBUF_BASE + 32'h400;
 localparam logic [31:0] MPY_GC_POOL_BYTES =
     MPY_SRAM_BYTES - (MPY_GC_POOL_BASE - MPY_SRAM_BASE);
 
@@ -324,53 +313,6 @@ function automatic logic mpy_flash_addr_reserved(
     input logic [31:0] addr
 );
     mpy_flash_addr_reserved = (addr < MPY_FLASH_RESERVED_BYTES);
-endfunction
-
-function automatic logic [31:0] mpy_frame_base(
-    input logic [4:0] frame
-);
-    mpy_frame_base = MPY_FRAME_RESERVE_BASE + ({27'b0, frame} << 9);
-endfunction
-
-function automatic logic [31:0] mpy_frame_payload_addr(
-    input logic [4:0] frame,
-    input logic [5:0] slot
-);
-    mpy_frame_payload_addr = mpy_frame_base(frame) + {24'b0, slot, 2'b00};
-endfunction
-
-function automatic logic [31:0] mpy_frame_tag_addr(
-    input logic [4:0] frame,
-    input logic [5:0] slot
-);
-    mpy_frame_tag_addr = mpy_frame_base(frame) + 32'(MPY_FRAME_TAG_OFFSET) +
-                         {27'b0, slot[5:3], 2'b00};
-endfunction
-
-function automatic logic [31:0] mpy_frame_header_addr(
-    input logic [4:0] frame,
-    input logic [1:0] word
-);
-    mpy_frame_header_addr = mpy_frame_base(frame) + 32'(MPY_FRAME_HEADER_OFFSET) +
-                            {28'b0, word, 2'b00};
-endfunction
-
-// {hit, frame[4:0], slot[5:0]}. Payload occupies the first 256 bytes
-// of each 512-byte frame record (bit 8 of the record offset clear).
-function automatic logic [11:0] mpy_frame_payload_hit(
-    input logic [31:0] addr
-);
-    logic [31:0] off;
-    begin
-        mpy_frame_payload_hit = 12'b0;
-        if ((addr[1:0] == 2'b00) &&
-            (addr >= MPY_FRAME_RESERVE_BASE) &&
-            ((addr - MPY_FRAME_RESERVE_BASE) < MPY_FRAME_RESERVE_BYTES)) begin
-            off = addr - MPY_FRAME_RESERVE_BASE;
-            if (off[8] == 1'b0)
-                mpy_frame_payload_hit = {1'b1, off[13:9], off[7:2]};
-        end
-    end
 endfunction
 
 function automatic logic [15:0] mpy_sram_word_index(
