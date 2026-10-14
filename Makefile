@@ -115,7 +115,7 @@ EXCORE_RTL_SRCS := \
 	shell all-tests pycore-tag-decode pycore-exec pycore-type-pairs \
 	pycore-python-tests pycore-size-report pycore-compile-suite pycore-mem \
 	pycore-cache-lru pycore-cache pycore-ram pycore-l1d-handoff pycore-fetch \
-	pycore-frame pycore-frame-fib pycore-regfile pycore-codc pycore-gic \
+	pycore-frame pycore-frame-fib pycore-regfile mpy-value pycore-codc pycore-gic \
 	pycore-img-container-call-spike \
 	pycore-list-append-fixtures pycore-for-iter-fixtures \
 	pycore-list-extend-fixtures pycore-excore-integration-fixtures \
@@ -548,6 +548,17 @@ pycore-regfile:
 		pycore/tb/tb_regfile.sv
 	./$(BUILD_DIR)/pycore_regfile/Vtb_regfile
 
+mpy-value:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_mpy_value \
+		--Mdir $(BUILD_DIR)/mpy_value \
+		-Wall -Wno-fatal \
+		pycore/rtl/mpy_regfile.sv \
+		pycore/rtl/mpy_mem.sv \
+		pycore/tb/tb_mpy_value.sv
+	./$(BUILD_DIR)/mpy_value/Vtb_mpy_value
 
 # ---- Broad-object-support milestone targets (M6 / M8) ---------------------
 # M6 allocator_list is the `allocator-list` hardware test (excore area).
@@ -796,7 +807,7 @@ excore-test: excore-asm-tests excore-cpu-test
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-alu-units pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff pycore-mem-nb \
-	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile
+	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile mpy-value
 
 DOCKER_MAKE = docker run --rm $(DOCKER_RUN_FLAGS) \
 	-v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" \
