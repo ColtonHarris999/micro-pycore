@@ -354,6 +354,24 @@ pycore-tag-decode:
 		pycore/rtl/pycore_tag_decode.sv pycore/tb/tb_tag_decode.sv
 	./$(BUILD_DIR)/pycore_tag_decode/Vtb_tag_decode
 
+# MicroPython v1.29.0 bytecode decoder. MPY_ROOT is a checkout of that tag
+# with mpy-cross already built. vendor/micropython is used when it is present.
+MPY_ROOT ?= $(shell if [ -x vendor/micropython/mpy-cross/build/mpy-cross ]; then echo vendor/micropython; elif [ -x /tmp/micropython/mpy-cross/build/mpy-cross ]; then echo /tmp/micropython; fi)
+
+pycore-mpy-decode:
+	@test -n "$(MPY_ROOT)" || { echo "MPY_ROOT must point at MicroPython v1.29.0 with mpy-cross built"; exit 1; }
+	mkdir -p $(BUILD_DIR)/mpy_decode
+	MPY_ROOT="$(MPY_ROOT)" $(PYTHON) pycore/tb/mpy_decode_oracle.py \
+		--fixtures pycore/tb/mpy_fixtures \
+		--out $(BUILD_DIR)/mpy_decode/vectors.txt \
+		--xd-dir $(BUILD_DIR)/mpy_decode
+	$(VERILATOR) -sv --binary --timing \
+		--top-module tb_mpy_decode \
+		--Mdir $(BUILD_DIR)/mpy_decode_sim \
+		-Wall -Wno-fatal \
+		pycore/rtl/mpy_decode.sv pycore/tb/tb_mpy_decode.sv
+	./$(BUILD_DIR)/mpy_decode_sim/Vtb_mpy_decode +VECTOR=$(CURDIR)/$(BUILD_DIR)/mpy_decode/vectors.txt
+
 pycore-exec:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
