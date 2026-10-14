@@ -206,12 +206,12 @@ and its tag.
 
 | Tag | Name | Registers | Payload |
 | --- | --- | --- | --- |
-| `0000` | CONTROL | 1 | `[3:0]` kind: `0` empty, `1` `None`, `2` null / end of iteration, `3` dict tombstone |
+| `0000` | CONTROL | 1 | `[3:0]` kind: `0` empty, `1` `None`, `2` null / end of iteration, `3` dict tombstone, `4` `False`, `5` `True`. Arithmetic and dict hashing use `False` as int 0 and `True` as int 1 |
 | `0001` | INT | 1 | Signed 32-bit value. The `.mpy` small-int range is still 31 bits |
 | `0010` | INT64 | 2 | Low 32 bits, then `CONT` with the high 32 bits. Signed 64-bit |
 | `0011` | FLOAT | 1 | IEEE binary32 |
 | `0100` | COMPLEX | 2 | Real binary32, then `CONT` with the imaginary binary32 |
-| `0101` | BOOL | 1 | `[0]`. Arithmetic retags it as INT |
+| `0101` | reserved | — | Freed by moving `False` and `True` into CONTROL. Do not assign it without a plan revision |
 | `0110` | QSTR | 1 | Interned-string id |
 | `0111` | SHORT_STR | 4 | Length in the first payload's low byte, then up to 15 bytes across this register and three `CONT` registers |
 | `1000` | STR | 1 | Pointer to a long string. Length, hash, and bytes are in the object |
@@ -231,7 +231,8 @@ bytes. A longer string is STR.
 
 The collector reads nibble `i` before it follows the word at
 `data_base + 4*i`. CONTROL, INT, INT64, FLOAT, COMPLEX, BOOL, QSTR,
-SHORT_STR, and CONT are not pointers. A `MUT_COLLEC` address clears the
+SHORT_STR, and CONT are not pointers. `False` and `True` are CONTROL
+kinds, so they are not pointers either. A `MUT_COLLEC` address clears the
 low 2 bits first. Flash bytecode and UTF-8 have no
 nibbles. A frozen tuple or const pool uses this same layout. A ROM object
 with fixed fields does not tag every field. The first 8 bytes of flash
