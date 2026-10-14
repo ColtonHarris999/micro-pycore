@@ -1,180 +1,178 @@
 `include "pycore_defs.svh"
 
-// uPyCore value adapter (planning/micropython_pivot_plan.md §0.5, §1.2).
+// Scalar number unit for mpy_core (pycore/docs/mpy_core.md, "ALU").
 //
-// One architectural register is 36 bits: tag[35:32] and payload[31:0].
-// Wide values occupy the following registers, each tagged CONT:
-//   INT64     low 32, then high 32
-//   COMPLEX   real binary32, then imaginary binary32
-//   SHORT_STR length in the first payload's low byte, then up to 15 bytes
-//             across this register and three CONT registers
+// One operation per start_i pulse; done_o pulses when res_o, rkind_o and
+// err_o are valid. Operands are 64-bit: a signed integer (INT, INT64 and
+// bool all reach here as int64) or a binary32 in [31:0] when the matching
+// *_flt_i is set. Ops are the bytecode binary op numbers (py/runtime0.h,
+// in-place forms already folded onto the plain ones) and ALU_NEG..ALU_F2I.
 //
-// INT arithmetic is the existing 64-bit pycore_int_alu. A result that fits
-// in signed 32 is one INT register. A result that fits in signed 64 is an
-// INT64 pair. A result outside signed 64 is OverflowError (PY_TRAP_OVERFLOW).
-//
-// False and True are CONTROL kinds 4 and 5. Addition and dict hashing read
-// them as int 0 and int 1 (mpy_as_int).
-//
-// FLOAT is one binary32. The operand is widened, pycore_fp_add runs, and
-// the binary64 result is rounded back to binary32. COMPLEX add/sub is that
-// scalar add twice, real then imaginary. There is no complex ALU.
-//
-// SHORT_STR case conversion is ASCII A-Z / a-z only. Bytes outside that
-// range, including every non-ASCII byte, are copied unchanged. This path
-// does not use the Latin-1 case tables. STR is a pointer and QSTR is an
-// id; neither is case-mapped inline.
+// Integer semantics follow the oracle's 32-bit longlong build:
+//   + - * << overflowing int64          err OVERFLOW
+//   // and % with both operands in the 31-bit small-int range round toward
+//   minus infinity; otherwise they truncate, as C long long does
+//   ** with a negative exponent, and /, are float operations
+// Floats are binary32: each operand is widened to binary64, pycore_fpu
+// runs the operation once, and the result is rounded back. That is exact
+// for + - * /, fmod and the comparisons; ** may differ from powf in the
+// last bit. A float ** that overflows gives inf, as powf does.
+// A negative base with a fractional exponent reports err COMPLEX so the
+// firmware can build the complex result.
 
 // verilator lint_off DECLFILENAME
 package mpy_alu_pkg;
-    localparam logic [3:0] MPY_TAG_CONTROL   = 4'b0000;
-    localparam logic [3:0] MPY_TAG_INT       = 4'b0001;
-    localparam logic [3:0] MPY_TAG_INT64     = 4'b0010;
-    localparam logic [3:0] MPY_TAG_FLOAT     = 4'b0011;
-    localparam logic [3:0] MPY_TAG_COMPLEX   = 4'b0100;
-    localparam logic [3:0] MPY_TAG_QSTR      = 4'b0110;
-    localparam logic [3:0] MPY_TAG_SHORT_STR = 4'b0111;
-    localparam logic [3:0] MPY_TAG_STR       = 4'b1000;
-    localparam logic [3:0] MPY_TAG_TUPLE     = 4'b1001;
-    localparam logic [3:0] MPY_TAG_MUT_COLLEC = 4'b1010;
-    localparam logic [3:0] MPY_TAG_RANGE     = 4'b1011;
-    localparam logic [3:0] MPY_TAG_ITER      = 4'b1100;
-    localparam logic [3:0] MPY_TAG_BYTES     = 4'b1101;
-    localparam logic [3:0] MPY_TAG_OBJECT    = 4'b1110;
-    localparam logic [3:0] MPY_TAG_CONT      = 4'b1111;
+    localparam logic [5:0] ALU_LT      = 6'd0;
+    localparam logic [5:0] ALU_GT      = 6'd1;
+    localparam logic [5:0] ALU_EQ      = 6'd2;
+    localparam logic [5:0] ALU_LE      = 6'd3;
+    localparam logic [5:0] ALU_GE      = 6'd4;
+    localparam logic [5:0] ALU_NE      = 6'd5;
+    localparam logic [5:0] ALU_OR      = 6'd22;
+    localparam logic [5:0] ALU_XOR     = 6'd23;
+    localparam logic [5:0] ALU_AND     = 6'd24;
+    localparam logic [5:0] ALU_LSHIFT  = 6'd25;
+    localparam logic [5:0] ALU_RSHIFT  = 6'd26;
+    localparam logic [5:0] ALU_ADD     = 6'd27;
+    localparam logic [5:0] ALU_SUB     = 6'd28;
+    localparam logic [5:0] ALU_MUL     = 6'd29;
+    localparam logic [5:0] ALU_MATMUL  = 6'd30;
+    localparam logic [5:0] ALU_FLOOR   = 6'd31;
+    localparam logic [5:0] ALU_TDIV    = 6'd32;
+    localparam logic [5:0] ALU_MOD     = 6'd33;
+    localparam logic [5:0] ALU_POW     = 6'd34;
+    localparam logic [5:0] ALU_NEG     = 6'd40;
+    localparam logic [5:0] ALU_POS     = 6'd41;
+    localparam logic [5:0] ALU_INVERT  = 6'd42;
+    localparam logic [5:0] ALU_ABS     = 6'd43;
+    localparam logic [5:0] ALU_I2F     = 6'd44;
+    localparam logic [5:0] ALU_F2I     = 6'd45;
 
-    localparam logic [3:0] MPY_CTL_EMPTY     = 4'd0;
-    localparam logic [3:0] MPY_CTL_NONE      = 4'd1;
-    localparam logic [3:0] MPY_CTL_NULL      = 4'd2;
-    localparam logic [3:0] MPY_CTL_TOMBSTONE = 4'd3;
-    localparam logic [3:0] MPY_CTL_FALSE     = 4'd4;
-    localparam logic [3:0] MPY_CTL_TRUE      = 4'd5;
+    localparam logic [1:0] AK_INT   = 2'd0;
+    localparam logic [1:0] AK_FLOAT = 2'd1;
+    localparam logic [1:0] AK_BOOL  = 2'd3;
 
-    // Above PY_ALU_ABS (24) and below PY_ALU_ILLEGAL (31).
-    localparam logic [4:0] MPY_OP_HASH  = 5'd25;
-    localparam logic [4:0] MPY_OP_UPPER = 5'd26;
-    localparam logic [4:0] MPY_OP_LOWER = 5'd27;
+    localparam logic [2:0] AE_NONE        = 3'd0;
+    localparam logic [2:0] AE_ZERO_DIV    = 3'd1;
+    localparam logic [2:0] AE_OVERFLOW    = 3'd2;
+    localparam logic [2:0] AE_NEG_SHIFT   = 3'd3;
+    localparam logic [2:0] AE_UNSUPPORTED = 3'd4;
+    localparam logic [2:0] AE_COMPLEX     = 3'd5;
+    localparam logic [2:0] AE_FTOI        = 3'd6;
 
-    localparam int MPY_SHORT_BYTES = 15;
-
-    function automatic logic [35:0] mpy_reg(
-        input logic [3:0]  tag,
-        input logic [31:0] pay
-    );
-        mpy_reg = {tag, pay};
-    endfunction
-
-    function automatic logic [3:0] mpy_tag(input logic [35:0] r);
-        mpy_tag = r[35:32];
-    endfunction
-
-    function automatic logic [31:0] mpy_pay(input logic [35:0] r);
-        mpy_pay = r[31:0];
-    endfunction
-
-    function automatic logic mpy_is_false(
-        input logic [3:0]  tag,
-        input logic [31:0] pay
-    );
-        mpy_is_false = (tag == MPY_TAG_CONTROL) && (pay[3:0] == MPY_CTL_FALSE);
-    endfunction
-
-    function automatic logic mpy_is_true(
-        input logic [3:0]  tag,
-        input logic [31:0] pay
-    );
-        mpy_is_true = (tag == MPY_TAG_CONTROL) && (pay[3:0] == MPY_CTL_TRUE);
-    endfunction
-
-    // STR, containers, and objects carry a pointer. QSTR is an id, not a pointer.
-    function automatic logic mpy_is_ptr(input logic [3:0] tag);
-        mpy_is_ptr = (tag == MPY_TAG_STR) || (tag == MPY_TAG_TUPLE) ||
-                     (tag == MPY_TAG_MUT_COLLEC) || (tag == MPY_TAG_RANGE) ||
-                     (tag == MPY_TAG_ITER) || (tag == MPY_TAG_BYTES) ||
-                     (tag == MPY_TAG_OBJECT);
-    endfunction
-
-    function automatic logic mpy_int_ok(
-        input logic [3:0]  tag0,
-        input logic [31:0] pay0,
-        input logic [3:0]  tag1
-    );
-        mpy_int_ok = mpy_is_false(tag0, pay0) || mpy_is_true(tag0, pay0) ||
-                     (tag0 == MPY_TAG_INT) ||
-                     ((tag0 == MPY_TAG_INT64) && (tag1 == MPY_TAG_CONT));
-    endfunction
-
-    // Shared by addition and dict hashing. False -> 0, True -> 1.
-    // tag1 is checked by mpy_int_ok before this is used as an INT64.
-    function automatic logic [63:0] mpy_as_int(
-        input logic [3:0]  tag0,
-        input logic [31:0] pay0,
-        input logic [31:0] pay1
-    );
-        if (mpy_is_false(tag0, pay0))
-            mpy_as_int = 64'd0;
-        else if (mpy_is_true(tag0, pay0))
-            mpy_as_int = 64'd1;
-        else if (tag0 == MPY_TAG_INT)
-            mpy_as_int = {{32{pay0[31]}}, pay0};
-        else
-            mpy_as_int = {pay1, pay0};
-    endfunction
-
-    function automatic logic mpy_fits_i32(input logic [63:0] v);
-        mpy_fits_i32 = (v[63:32] == {32{v[31]}});
-    endfunction
-
-    function automatic logic [7:0] mpy_ascii_upper(input logic [7:0] b);
-        if ((b >= 8'h61) && (b <= 8'h7A))
-            mpy_ascii_upper = b - 8'h20;
-        else
-            mpy_ascii_upper = b;
-    endfunction
-
-    function automatic logic [7:0] mpy_ascii_lower(input logic [7:0] b);
-        if ((b >= 8'h41) && (b <= 8'h5A))
-            mpy_ascii_lower = b + 8'h20;
-        else
-            mpy_ascii_lower = b;
-    endfunction
-
-    function automatic logic [31:0] mpy_pack4(
-        input logic [7:0] b0,
-        input logic [7:0] b1,
-        input logic [7:0] b2,
-        input logic [7:0] b3
-    );
-        mpy_pack4 = {b3, b2, b1, b0};
-    endfunction
-
-    // Byte i lives at position i+1 in the little-endian 16-byte window
-    // (byte 0 of that window is the length).
-    function automatic logic [7:0] mpy_short_byte(
-        input logic [31:0] p0,
-        input logic [31:0] p1,
-        input logic [31:0] p2,
-        input logic [31:0] p3,
-        input logic [3:0]  idx
-    );
-        logic [4:0]  pos;
-        logic [31:0] word;
-        logic [7:0]  lane;
+    // int64 -> binary32, round to nearest even (the C conversion).
+    function automatic logic [31:0] mpy_i64_to_f32(input logic [63:0] v);
+        logic        s;
+        logic [63:0] m;
+        logic [63:0] mant;
+        logic [63:0] rem;
+        logic [63:0] half;
+        int          msb;
+        int          sh;
+        logic [8:0]  e;
         begin
-            pos = {1'b0, idx} + 5'd1;
-            unique case (pos[3:2])
-                2'd0: word = p0;
-                2'd1: word = p1;
-                2'd2: word = p2;
-                default: word = p3;
-            endcase
-            unique case (pos[1:0])
-                2'd0: lane = word[7:0];
-                2'd1: lane = word[15:8];
-                2'd2: lane = word[23:16];
-                default: lane = word[31:24];
-            endcase
-            mpy_short_byte = lane;
+            s = v[63];
+            m = s ? (~v + 64'd1) : v;
+            msb = 0;
+            for (int i = 0; i < 64; i++)
+                if (m[i]) msb = i;
+            if (m == 64'd0) begin
+                mpy_i64_to_f32 = 32'd0;
+            end else if (msb <= 23) begin
+                mant = m << (23 - msb);
+                e = 9'(msb + 127);
+                mpy_i64_to_f32 = {s, e[7:0], mant[22:0]};
+            end else begin
+                sh = msb - 23;
+                mant = m >> sh;
+                rem = m & ((64'd1 << sh) - 64'd1);
+                half = 64'd1 << (sh - 1);
+                e = 9'(msb + 127);
+                if (rem > half || (rem == half && mant[0]))
+                    mant = mant + 64'd1;
+                if (mant[24]) begin
+                    mant = mant >> 1;
+                    e = e + 9'd1;
+                end
+                mpy_i64_to_f32 = {s, e[7:0], mant[22:0]};
+            end
+        end
+    endfunction
+
+    // binary32 -> int64 toward zero. ok = 0 for NaN, inf, and |f| >= 2**63.
+    function automatic logic [63:0] mpy_f32_to_i64(input logic [31:0] f, output logic ok);
+        logic [7:0]  e;
+        logic [63:0] m;
+        int          x;
+        begin
+            e = f[30:23];
+            ok = 1'b1;
+            mpy_f32_to_i64 = 64'd0;
+            if (e == 8'hFF) begin
+                ok = 1'b0;
+            end else if (e >= 8'd127) begin
+                x = int'(e) - 127;
+                if (x >= 63) begin
+                    ok = 1'b0;
+                end else begin
+                    m = {40'd0, 1'b1, f[22:0]};
+                    if (x >= 23) m = m << (x - 23);
+                    else m = m >> (23 - x);
+                    mpy_f32_to_i64 = f[31] ? (~m + 64'd1) : m;
+                end
+            end
+        end
+    endfunction
+
+    function automatic logic mpy_f32_nan(input logic [31:0] f);
+        mpy_f32_nan = (f[30:23] == 8'hFF) && (f[22:0] != 23'd0);
+    endfunction
+
+    function automatic logic mpy_f32_zero(input logic [31:0] f);
+        mpy_f32_zero = (f[30:0] == 31'd0);
+    endfunction
+
+    // a < b with IEEE semantics (NaN compares false, -0 == +0).
+    function automatic logic mpy_f32_lt(input logic [31:0] a, input logic [31:0] b);
+        if (mpy_f32_nan(a) || mpy_f32_nan(b) || (mpy_f32_zero(a) && mpy_f32_zero(b)))
+            mpy_f32_lt = 1'b0;
+        else if (a[31] != b[31])
+            mpy_f32_lt = a[31];
+        else if (!a[31])
+            mpy_f32_lt = a[30:0] < b[30:0];
+        else
+            mpy_f32_lt = a[30:0] > b[30:0];
+    endfunction
+
+    function automatic logic mpy_f32_eq(input logic [31:0] a, input logic [31:0] b);
+        mpy_f32_eq = !mpy_f32_nan(a) && !mpy_f32_nan(b) &&
+                     ((a == b) || (mpy_f32_zero(a) && mpy_f32_zero(b)));
+    endfunction
+
+    // An integral binary32 (including the infinities' neighbours).
+    function automatic logic mpy_f32_integral(input logic [31:0] f);
+        logic [7:0]  e;
+        logic [22:0] mask;
+        begin
+            e = f[30:23];
+            if (e == 8'hFF) mpy_f32_integral = 1'b0;
+            else if (e >= 8'd150) mpy_f32_integral = 1'b1;
+            else if (e < 8'd127) mpy_f32_integral = (f[30:0] == 31'd0);
+            else begin
+                mask = 23'h7FFFFF >> (int'(e) - 127);
+                mpy_f32_integral = (f[22:0] & mask) == 23'd0;
+            end
+        end
+    endfunction
+
+    // An odd integral binary32.
+    function automatic logic mpy_f32_odd(input logic [31:0] f);
+        logic [7:0] e;
+        begin
+            e = f[30:23];
+            if (!mpy_f32_integral(f) || e < 8'd127 || e > 8'd150) mpy_f32_odd = 1'b0;
+            else if (e == 8'd127) mpy_f32_odd = 1'b1;
+            else mpy_f32_odd = f[5'(8'd150 - e)];
         end
     endfunction
 
@@ -282,6 +280,7 @@ package mpy_alu_pkg;
             end
         end
     endfunction
+
 endpackage
 // verilator lint_on DECLFILENAME
 
@@ -289,343 +288,290 @@ module mpy_alu (
     input  logic        clk_i,
     input  logic        rst_n_i,
     input  logic        start_i,
-    input  logic [4:0]  op_i,
-
-    input  logic [35:0] a_reg_i [4],
-    input  logic [35:0] b_reg_i [4],
-
-    output logic [35:0] res_reg_o [4],
-    output logic [2:0]  res_nreg_o,
-
+    input  logic [5:0]  op_i,
+    input  logic        a_flt_i,
+    input  logic        b_flt_i,
+    input  logic [63:0] a_i,
+    input  logic [63:0] b_i,
+    // Both integer operands are in the oracle's 31-bit small-int range.
+    input  logic        small_i,
     output logic        done_o,
-    output logic        trap_o,
-    output logic [4:0]  trap_code_o,
-    output logic        stall_o,
-    output logic        busy_o
+    output logic [63:0] res_o,
+    output logic [1:0]  rkind_o,
+    output logic [2:0]  err_o
 );
     import mpy_alu_pkg::*;
 
-    typedef enum logic [2:0] {
-        S_IDLE,
-        S_FADD,
-        S_CADD_R,
-        S_CADD_I,
-        S_DONE,
-        S_TRAP
-    } state_e;
+    typedef enum logic [2:0] { A_IDLE, A_MUL, A_DIV, A_POW, A_FPU, A_DONE } astate_e;
+    astate_e st;
 
-    typedef enum logic [2:0] {
-        ACC_TRAP,
-        ACC_INT,
-        ACC_HASH,
-        ACC_STR,
-        ACC_FADD,
-        ACC_CADD
-    } acc_e;
+    logic [5:0]  op;
+    logic        small_r;
+    logic [63:0] a, b;
+    logic [31:0] fa, fb;
 
-    function automatic logic mpy_combo_int_op(input logic [4:0] op);
-        unique case (op)
-            PY_ALU_ADD, PY_ALU_SUB,
-            PY_ALU_LSHIFT, PY_ALU_RSHIFT,
-            PY_ALU_AND, PY_ALU_OR, PY_ALU_XOR,
-            PY_ALU_NEG, PY_ALU_POS, PY_ALU_INVERT, PY_ALU_NOT, PY_ALU_PASS,
-            PY_ALU_EQ, PY_ALU_NE, PY_ALU_LT, PY_ALU_LE, PY_ALU_GT, PY_ALU_GE:
-                mpy_combo_int_op = 1'b1;
-            default:
-                mpy_combo_int_op = 1'b0;
+    // Integer datapath (combinational ops).
+    logic [4:0]  iop;
+    logic [63:0] ires;
+    logic        izero, iovf, iverr;
+    always_comb begin
+        case (op)
+            ALU_ADD:    iop = PY_ALU_ADD;
+            ALU_SUB:    iop = PY_ALU_SUB;
+            ALU_AND:    iop = PY_ALU_AND;
+            ALU_OR:     iop = PY_ALU_OR;
+            ALU_XOR:    iop = PY_ALU_XOR;
+            ALU_LSHIFT: iop = PY_ALU_LSHIFT;
+            ALU_RSHIFT: iop = PY_ALU_RSHIFT;
+            ALU_LT:     iop = PY_ALU_LT;
+            ALU_GT:     iop = PY_ALU_GT;
+            ALU_EQ:     iop = PY_ALU_EQ;
+            ALU_LE:     iop = PY_ALU_LE;
+            ALU_GE:     iop = PY_ALU_GE;
+            ALU_NE:     iop = PY_ALU_NE;
+            ALU_NEG:    iop = PY_ALU_NEG;
+            ALU_INVERT: iop = PY_ALU_INVERT;
+            default:    iop = PY_ALU_PASS;
         endcase
-    endfunction
-
-    function automatic logic mpy_unary_int_op(input logic [4:0] op);
-        mpy_unary_int_op = (op == PY_ALU_NEG) || (op == PY_ALU_POS) ||
-                           (op == PY_ALU_INVERT) || (op == PY_ALU_NOT) ||
-                           (op == PY_ALU_PASS);
-    endfunction
-
-    function automatic logic mpy_cmp_op(input logic [4:0] op);
-        mpy_cmp_op = (op == PY_ALU_EQ) || (op == PY_ALU_NE) ||
-                     (op == PY_ALU_LT) || (op == PY_ALU_LE) ||
-                     (op == PY_ALU_GT) || (op == PY_ALU_GE) ||
-                     (op == PY_ALU_NOT);
-    endfunction
-
-    logic [3:0]  a_tag [4];
-    logic [31:0] a_pay [4];
-    logic [3:0]  b_tag [4];
-    logic [31:0] b_pay [4];
-
-    genvar gi;
-    generate
-        for (gi = 0; gi < 4; gi++) begin : g_split
-            assign a_tag[gi] = mpy_tag(a_reg_i[gi]);
-            assign a_pay[gi] = mpy_pay(a_reg_i[gi]);
-            assign b_tag[gi] = mpy_tag(b_reg_i[gi]);
-            assign b_pay[gi] = mpy_pay(b_reg_i[gi]);
-        end
-    endgenerate
-
-    logic        a_ok, b_ok;
-    logic [63:0] a_int, b_int;
-    assign a_ok  = mpy_int_ok(a_tag[0], a_pay[0], a_tag[1]);
-    assign b_ok  = mpy_int_ok(b_tag[0], b_pay[0], b_tag[1]);
-    assign a_int = mpy_as_int(a_tag[0], a_pay[0], a_pay[1]);
-    assign b_int = mpy_as_int(b_tag[0], b_pay[0], b_pay[1]);
-
-    logic        float_pair, complex_pair, short_ok;
-    assign float_pair = (a_tag[0] == MPY_TAG_FLOAT) && (b_tag[0] == MPY_TAG_FLOAT);
-    assign complex_pair = (a_tag[0] == MPY_TAG_COMPLEX) && (b_tag[0] == MPY_TAG_COMPLEX) &&
-                          (a_tag[1] == MPY_TAG_CONT) && (b_tag[1] == MPY_TAG_CONT);
-    assign short_ok = (a_tag[0] == MPY_TAG_SHORT_STR) && (a_pay[0][7:0] <= 8'd15) &&
-                      (a_tag[1] == MPY_TAG_CONT) && (a_tag[2] == MPY_TAG_CONT) &&
-                      (a_tag[3] == MPY_TAG_CONT);
-
-    logic [63:0] int_y;
-    logic        int_zero, int_ovf, int_valerr;
-    logic [4:0]  int_op;
-    assign int_op = mpy_combo_int_op(op_i) ? op_i : PY_ALU_ADD;
-
+    end
     pycore_int_alu u_int (
-        .op_a_i(a_int),
-        .op_b_i(b_int),
-        .op_i(int_op),
-        .result_o(int_y),
-        .zero_flag_o(int_zero),
-        .overflow_flag_o(int_ovf),
-        .value_error_o(int_valerr)
+        .op_a_i(a), .op_b_i(b), .op_i(iop),
+        .result_o(ires), .zero_flag_o(izero), .overflow_flag_o(iovf), .value_error_o(iverr)
     );
 
-    logic [63:0] fp_a, fp_b;
-    logic        fp_sub;
-    logic        fp_start, fp_done, fp_busy;
-    logic [63:0] fp_y;
-
-    state_e      state_q;
-    logic [35:0] res_q [4];
-    logic [2:0]  nreg_q;
-    logic [4:0]  trap_q;
-    logic [31:0] creal_q;
-
-    always_comb begin
-        if (state_q == S_CADD_I) begin
-            fp_a = mpy_f32_to_f64(a_pay[1]);
-            fp_b = mpy_f32_to_f64(b_pay[1]);
-        end else begin
-            fp_a = mpy_f32_to_f64(a_pay[0]);
-            fp_b = mpy_f32_to_f64(b_pay[0]);
-        end
-    end
-    assign fp_sub   = (op_i == PY_ALU_SUB);
-    assign fp_start = start_i &&
-                      ((state_q == S_FADD) || (state_q == S_CADD_R) || (state_q == S_CADD_I));
-
-    pycore_fp_add u_fp_add (
-        .clk_i(clk_i),
-        .rst_n_i(rst_n_i),
-        .start_i(fp_start),
-        .sub_i(fp_sub),
-        .op_a_i(fp_a),
-        .op_b_i(fp_b),
-        .result_o(fp_y),
-        .done_o(fp_done),
-        .busy_o(fp_busy)
+    // Multiplier, shared by * and the power sequencer.
+    logic        pow_mul_start;
+    logic [63:0] mul_a, mul_b, pow_mul_a, pow_mul_b, mul_lo, mul_hi;
+    logic        mul_done, mul_stall, mul_busy;
+    assign mul_a = (st == A_POW) ? pow_mul_a : a;
+    assign mul_b = (st == A_POW) ? pow_mul_b : b;
+    pycore_mul u_mul (
+        .clk_i(clk_i), .rst_n_i(rst_n_i),
+        .start_i((st == A_MUL) || ((st == A_POW) && pow_mul_start)),
+        .op_a_i(mul_a), .op_b_i(mul_b),
+        .result_o(mul_lo), .result_hi_o(mul_hi),
+        .done_o(mul_done), .stall_o(mul_stall), .busy_o(mul_busy)
     );
 
-    acc_e       acc;
-    logic [4:0] acc_code;
-    always_comb begin
-        acc      = ACC_TRAP;
-        acc_code = PY_TRAP_TYPE;
-        if (op_i == MPY_OP_HASH) begin
-            if (a_ok)
-                acc = ACC_HASH;
-        end else if ((op_i == MPY_OP_UPPER) || (op_i == MPY_OP_LOWER)) begin
-            // QSTR is an id. STR (and the other pointer tags) is an address.
-            // Neither has inline bytes, so the ASCII map does not touch it.
-            if ((a_tag[0] == MPY_TAG_QSTR) || mpy_is_ptr(a_tag[0]))
-                acc = ACC_TRAP;
-            else if (short_ok)
-                acc = ACC_STR;
-        end else if (mpy_combo_int_op(op_i) && a_ok && (mpy_unary_int_op(op_i) || b_ok)) begin
-            if (int_valerr) begin
-                acc      = ACC_TRAP;
-                acc_code = PY_TRAP_VALUE;
-            end else if (int_ovf && !mpy_cmp_op(op_i)) begin
-                acc      = ACC_TRAP;
-                acc_code = PY_TRAP_OVERFLOW;
-            end else begin
-                acc = ACC_INT;
-            end
-        end else if (((op_i == PY_ALU_ADD) || (op_i == PY_ALU_SUB)) && float_pair) begin
-            acc = ACC_FADD;
-        end else if (((op_i == PY_ALU_ADD) || (op_i == PY_ALU_SUB)) && complex_pair) begin
-            acc = ACC_CADD;
-        end
-    end
+    logic [63:0] pow_res;
+    logic        pow_trap, pow_done, pow_stall, pow_busy;
+    pycore_ipow u_pow (
+        .clk_i(clk_i), .rst_n_i(rst_n_i), .start_i(st == A_POW),
+        .base_i(a), .exp_i(b),
+        .mul_start_o(pow_mul_start), .mul_a_o(pow_mul_a), .mul_b_o(pow_mul_b),
+        .mul_lo_i(mul_lo), .mul_hi_i(mul_hi), .mul_done_i(mul_done),
+        .result_o(pow_res), .trap_o(pow_trap), .done_o(pow_done),
+        .stall_o(pow_stall), .busy_o(pow_busy)
+    );
 
-    logic [7:0] cased_b [15];
-    logic [35:0] str_r [4];
-    always_comb begin
-        integer bi;
-        logic [7:0] raw;
-        for (bi = 0; bi < MPY_SHORT_BYTES; bi++) begin
-            raw = mpy_short_byte(a_pay[0], a_pay[1], a_pay[2], a_pay[3], bi[3:0]);
-            if (bi < int'(a_pay[0][7:0])) begin
-                if (op_i == MPY_OP_LOWER)
-                    cased_b[bi] = mpy_ascii_lower(raw);
-                else
-                    cased_b[bi] = mpy_ascii_upper(raw);
-            end else begin
-                cased_b[bi] = 8'h00;
-            end
-        end
-        str_r[0] = mpy_reg(MPY_TAG_SHORT_STR,
-                           mpy_pack4(a_pay[0][7:0], cased_b[0], cased_b[1], cased_b[2]));
-        str_r[1] = mpy_reg(MPY_TAG_CONT,
-                           mpy_pack4(cased_b[3], cased_b[4], cased_b[5], cased_b[6]));
-        str_r[2] = mpy_reg(MPY_TAG_CONT,
-                           mpy_pack4(cased_b[7], cased_b[8], cased_b[9], cased_b[10]));
-        str_r[3] = mpy_reg(MPY_TAG_CONT,
-                           mpy_pack4(cased_b[11], cased_b[12], cased_b[13], cased_b[14]));
-    end
+    logic [63:0] quot, rem;
+    logic        div_zero, div_done, div_stall, div_busy;
+    pycore_div u_div (
+        .clk_i(clk_i), .rst_n_i(rst_n_i), .start_i(st == A_DIV),
+        .op_a_i(a), .op_b_i(b),
+        .quot_o(quot), .rem_o(rem), .div_zero_o(div_zero),
+        .done_o(div_done), .stall_o(div_stall), .busy_o(div_busy)
+    );
 
-    logic [35:0] int_pack_r0, int_pack_r1;
-    logic [2:0]  int_pack_n;
+    // Float unit in binary64.
+    logic [4:0]   fop;
+    logic [127:0] fres;
+    logic         fexc, fdone, fstall, fbusy;
     always_comb begin
-        if (mpy_fits_i32(int_y)) begin
-            int_pack_r0 = mpy_reg(MPY_TAG_INT, int_y[31:0]);
-            int_pack_r1 = '0;
-            int_pack_n  = 3'd1;
-        end else begin
-            int_pack_r0 = mpy_reg(MPY_TAG_INT64, int_y[31:0]);
-            int_pack_r1 = mpy_reg(MPY_TAG_CONT, int_y[63:32]);
-            int_pack_n  = 3'd2;
-        end
+        case (op)
+            ALU_ADD:   fop = PY_ALU_ADD;
+            ALU_SUB:   fop = PY_ALU_SUB;
+            ALU_MUL:   fop = PY_ALU_MUL;
+            ALU_TDIV:  fop = PY_ALU_TRUE_DIV;
+            ALU_FLOOR: fop = PY_ALU_FLOOR_DIV;
+            ALU_MOD:   fop = PY_ALU_MOD;
+            ALU_POW:   fop = PY_ALU_POWER;
+            default:   fop = PY_ALU_PASS;
+        endcase
     end
+    pycore_fpu u_fpu (
+        .clk_i(clk_i), .rst_n_i(rst_n_i), .start_i(st == A_FPU),
+        .op_i(fop), .complex_i(1'b0),
+        .op_a_i({64'd0, mpy_f32_to_f64(fa)}), .op_b_i({64'd0, mpy_f32_to_f64(fb)}),
+        .result_o(fres), .exception_o(fexc), .done_o(fdone), .stall_o(fstall), .busy_o(fbusy)
+    );
 
-    logic [35:0] hash_pack_r0, hash_pack_r1;
-    logic [2:0]  hash_pack_n;
-    always_comb begin
-        if (mpy_fits_i32(a_int)) begin
-            hash_pack_r0 = mpy_reg(MPY_TAG_INT, a_int[31:0]);
-            hash_pack_r1 = '0;
-            hash_pack_n  = 3'd1;
-        end else begin
-            hash_pack_r0 = mpy_reg(MPY_TAG_INT64, a_int[31:0]);
-            hash_pack_r1 = mpy_reg(MPY_TAG_CONT, a_int[63:32]);
-            hash_pack_n  = 3'd2;
-        end
-    end
-
+    // Accept: everything that finishes in one cycle is answered here.
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
-            state_q  <= S_IDLE;
-            nreg_q   <= 3'd0;
-            trap_q   <= 5'd0;
-            creal_q  <= 32'd0;
-            res_q[0] <= '0;
-            res_q[1] <= '0;
-            res_q[2] <= '0;
-            res_q[3] <= '0;
-        end else if (!start_i) begin
-            state_q <= S_IDLE;
+            st <= A_IDLE;
+            done_o <= 1'b0;
+            res_o <= '0;
+            rkind_o <= AK_INT;
+            err_o <= AE_NONE;
+            op <= '0;
+            small_r <= 1'b0;
+            a <= '0;
+            b <= '0;
+            fa <= '0;
+            fb <= '0;
         end else begin
-            unique case (state_q)
-                S_IDLE: begin
-                    unique case (acc)
-                        ACC_INT: begin
-                            if (mpy_cmp_op(op_i)) begin
-                                res_q[0] <= mpy_reg(MPY_TAG_CONTROL,
-                                                    {28'b0, int_y[0] ? MPY_CTL_TRUE : MPY_CTL_FALSE});
-                                res_q[1] <= '0;
-                                nreg_q   <= 3'd1;
-                            end else begin
-                                res_q[0] <= int_pack_r0;
-                                res_q[1] <= int_pack_r1;
-                                nreg_q   <= int_pack_n;
+            done_o <= 1'b0;
+            case (st)
+                A_IDLE: if (start_i) begin
+                    logic [31:0] xa, xb;
+                    logic        isf, ok;
+                    logic [63:0] v;
+                    op <= op_i;
+                    small_r <= small_i;
+                    a <= a_i;
+                    b <= b_i;
+                    xa = a_flt_i ? a_i[31:0] : mpy_i64_to_f32(a_i);
+                    xb = b_flt_i ? b_i[31:0] : mpy_i64_to_f32(b_i);
+                    fa <= xa;
+                    fb <= xb;
+                    err_o <= AE_NONE;
+                    res_o <= '0;
+                    rkind_o <= AK_INT;
+                    isf = a_flt_i || b_flt_i;
+                    if (op_i == ALU_I2F) begin
+                        res_o <= {32'd0, xa};
+                        rkind_o <= AK_FLOAT;
+                        st <= A_DONE;
+                    end else if (op_i == ALU_F2I) begin
+                        v = mpy_f32_to_i64(a_i[31:0], ok);
+                        res_o <= v;
+                        if (!ok) err_o <= AE_FTOI;
+                        st <= A_DONE;
+                    end else if (op_i >= ALU_NEG) begin
+                        if (a_flt_i) begin
+                            rkind_o <= AK_FLOAT;
+                            case (op_i)
+                                ALU_NEG: res_o <= {32'd0, ~a_i[31], a_i[30:0]};
+                                ALU_POS: res_o <= {32'd0, a_i[31:0]};
+                                ALU_ABS: res_o <= {32'd0, 1'b0, a_i[30:0]};
+                                default: err_o <= AE_UNSUPPORTED;
+                            endcase
+                            st <= A_DONE;
+                        end else begin
+                            // The integer unit answers next cycle (A_DONE reads it).
+                            if (op_i == ALU_ABS && !a_i[63]) op <= ALU_POS;
+                            else if (op_i == ALU_ABS) op <= ALU_NEG;
+                            st <= A_DONE;
+                        end
+                    end else if (op_i <= ALU_NE) begin
+                        if (isf) begin
+                            rkind_o <= AK_BOOL;
+                            case (op_i)
+                                ALU_LT: res_o <= {63'd0, mpy_f32_lt(xa, xb)};
+                                ALU_GT: res_o <= {63'd0, mpy_f32_lt(xb, xa)};
+                                ALU_LE: res_o <= {63'd0, mpy_f32_lt(xa, xb) || mpy_f32_eq(xa, xb)};
+                                ALU_GE: res_o <= {63'd0, mpy_f32_lt(xb, xa) || mpy_f32_eq(xa, xb)};
+                                ALU_EQ: res_o <= {63'd0, mpy_f32_eq(xa, xb)};
+                                default: res_o <= {63'd0, !mpy_f32_eq(xa, xb)};
+                            endcase
+                        end
+                        st <= A_DONE;
+                    end else if (isf || op_i == ALU_TDIV || (op_i == ALU_POW && b_i[63])) begin
+                        rkind_o <= AK_FLOAT;
+                        case (op_i)
+                            ALU_ADD, ALU_SUB, ALU_MUL: st <= A_FPU;
+                            ALU_TDIV, ALU_FLOOR, ALU_MOD: begin
+                                if (mpy_f32_zero(xb)) begin
+                                    err_o <= AE_ZERO_DIV;
+                                    st <= A_DONE;
+                                end else begin
+                                    st <= A_FPU;
+                                end
                             end
-                            res_q[2] <= '0;
-                            res_q[3] <= '0;
-                            state_q  <= S_DONE;
-                        end
-                        ACC_HASH: begin
-                            res_q[0] <= hash_pack_r0;
-                            res_q[1] <= hash_pack_r1;
-                            res_q[2] <= '0;
-                            res_q[3] <= '0;
-                            nreg_q   <= hash_pack_n;
-                            state_q  <= S_DONE;
-                        end
-                        ACC_STR: begin
-                            res_q[0] <= str_r[0];
-                            res_q[1] <= str_r[1];
-                            res_q[2] <= str_r[2];
-                            res_q[3] <= str_r[3];
-                            nreg_q   <= 3'd4;
-                            state_q  <= S_DONE;
-                        end
-                        ACC_FADD: state_q <= S_FADD;
-                        ACC_CADD: state_q <= S_CADD_R;
-                        default: begin
-                            res_q[0] <= '0;
-                            res_q[1] <= '0;
-                            res_q[2] <= '0;
-                            res_q[3] <= '0;
-                            nreg_q   <= 3'd0;
-                            trap_q   <= acc_code;
-                            state_q  <= S_TRAP;
-                        end
-                    endcase
-                end
-                S_FADD: begin
-                    if (fp_done) begin
-                        res_q[0] <= mpy_reg(MPY_TAG_FLOAT, mpy_f64_to_f32(fp_y));
-                        res_q[1] <= '0;
-                        res_q[2] <= '0;
-                        res_q[3] <= '0;
-                        nreg_q   <= 3'd1;
-                        state_q  <= S_DONE;
+                            ALU_POW: begin
+                                if (mpy_f32_zero(xa) && xb[31] && !(xb[30:23] == 8'hFF && xb[22:0] == 23'd0)) begin
+                                    err_o <= AE_ZERO_DIV;
+                                    st <= A_DONE;
+                                end else if (xa[31] && !mpy_f32_zero(xa) && !mpy_f32_nan(xa) &&
+                                             !mpy_f32_integral(xb) && !mpy_f32_nan(xb) &&
+                                             !(xb[30:23] == 8'hFF)) begin
+                                    err_o <= AE_COMPLEX;
+                                    st <= A_DONE;
+                                end else begin
+                                    st <= A_FPU;
+                                end
+                            end
+                            default: begin
+                                err_o <= AE_UNSUPPORTED;
+                                st <= A_DONE;
+                            end
+                        endcase
+                    end else begin
+                        case (op_i)
+                            ALU_MUL: st <= A_MUL;
+                            ALU_FLOOR, ALU_MOD: begin
+                                if (b_i == 64'd0) begin
+                                    err_o <= AE_ZERO_DIV;
+                                    st <= A_DONE;
+                                end else begin
+                                    st <= A_DIV;
+                                end
+                            end
+                            ALU_POW: st <= A_POW;
+                            ALU_MATMUL: begin
+                                err_o <= AE_UNSUPPORTED;
+                                st <= A_DONE;
+                            end
+                            default: st <= A_DONE;
+                        endcase
                     end
                 end
-                S_CADD_R: begin
-                    if (fp_done) begin
-                        creal_q <= mpy_f64_to_f32(fp_y);
-                        state_q <= S_CADD_I;
-                    end
+                A_MUL: if (mul_done) begin
+                    res_o <= mul_lo;
+                    if (mul_hi != {64{mul_lo[63]}}) err_o <= AE_OVERFLOW;
+                    st <= A_IDLE;
+                    done_o <= 1'b1;
                 end
-                S_CADD_I: begin
-                    if (fp_done) begin
-                        res_q[0] <= mpy_reg(MPY_TAG_COMPLEX, creal_q);
-                        res_q[1] <= mpy_reg(MPY_TAG_CONT, mpy_f64_to_f32(fp_y));
-                        res_q[2] <= '0;
-                        res_q[3] <= '0;
-                        nreg_q   <= 3'd2;
-                        state_q  <= S_DONE;
+                A_DIV: if (div_done) begin
+                    // pycore_div floors. Off the small-int range the oracle truncates.
+                    if (!small_r && rem != 64'd0 && (a[63] != b[63])) begin
+                        res_o <= (op == ALU_FLOOR) ? quot + 64'd1 : rem - b;
+                    end else begin
+                        res_o <= (op == ALU_FLOOR) ? quot : rem;
                     end
+                    st <= A_IDLE;
+                    done_o <= 1'b1;
                 end
-                S_DONE: state_q <= S_IDLE;
-                S_TRAP: state_q <= S_IDLE;
-                default: state_q <= S_IDLE;
+                A_POW: if (pow_done || pow_trap) begin
+                    res_o <= pow_res;
+                    if (pow_trap) err_o <= AE_OVERFLOW;
+                    st <= A_IDLE;
+                    done_o <= 1'b1;
+                end
+                A_FPU: if (fdone || fexc) begin
+                    if (fexc) begin
+                        // Only ** overflow is left; powf gives inf with the sign of the result.
+                        res_o <= {32'd0, fa[31] && mpy_f32_odd(fb), 8'hFF, 23'd0};
+                    end else begin
+                        res_o <= {32'd0, mpy_f64_to_f32(fres[63:0])};
+                    end
+                    st <= A_IDLE;
+                    done_o <= 1'b1;
+                end
+                A_DONE: begin
+                    // Integer one-cycle ops: the unit sees the latched operands now.
+                    if (rkind_o == AK_INT && err_o == AE_NONE && op != ALU_F2I) begin
+                        res_o <= ires;
+                        if (op <= ALU_NE) begin
+                            rkind_o <= AK_BOOL;
+                        end else if (iverr) begin
+                            err_o <= AE_NEG_SHIFT;
+                        end else if (iovf) begin
+                            err_o <= AE_OVERFLOW;
+                        end
+                    end
+                    st <= A_IDLE;
+                    done_o <= 1'b1;
+                end
+                default: st <= A_IDLE;
             endcase
         end
     end
 
-    assign res_nreg_o  = nreg_q;
-    assign done_o      = (state_q == S_DONE);
-    assign trap_o      = (state_q == S_TRAP);
-    assign trap_code_o = trap_q;
-    assign stall_o     = start_i && !done_o && !trap_o;
-    assign busy_o      = (state_q == S_FADD) || (state_q == S_CADD_R) ||
-                         (state_q == S_CADD_I) || fp_busy;
-
-    // The integer ALU's zero flag is not an architectural output. Comparisons
-    // publish CONTROL True/False from the result bit.
     // verilator lint_off UNUSEDSIGNAL
-    wire unused_int_zero = int_zero;
+    logic unused;
+    assign unused = ^{izero, mul_stall, mul_busy, pow_stall, pow_busy, div_zero, div_stall, div_busy,
+                      fstall, fbusy, fres[127:64]};
     // verilator lint_on UNUSEDSIGNAL
-
-    generate
-        for (gi = 0; gi < 4; gi++) begin : g_res
-            assign res_reg_o[gi] = res_q[gi];
-        end
-    endgenerate
 endmodule
