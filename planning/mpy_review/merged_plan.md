@@ -247,7 +247,9 @@ bytearray share `MUT_COLLEC`, with the kind in the pointer's low 2 bits.
 TUPLE, STR, BYTES, RANGE, and ITER have their own tags and start at the
 first field. FUNCTION, TYPE, INSTANCE, and the other kinds that share
 the OBJECT tag store the kind in word 0 and the type pointer in word 1.
-The field lists are pivot plan §0.6.
+The field lists are pivot plan §0.6. Dict and set resize hashing is
+§0.7: the accelerator hashes plain keys, and the core precomputes a hash
+only for types whose `tp_hash` is a real function.
 
 Accelerators that stay on this hart: the container accelerator (list,
 tuple, dict, set, bytearray), the string accelerator (ASCII case
