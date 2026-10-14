@@ -1,11 +1,11 @@
 # MicroPython microcontroller core
 
-> **Superseded where it conflicts.** This repository now holds a copy of
-> pycore `43d791a` and retargets it in place, so it is no longer the separate
-> `mpycore/` tree this draft describes. Paths below that start with `pycore/`
-> are now paths in this repository. The plan of record is
-> [`micropython_pivot_plan.md`](micropython_pivot_plan.md), and its §9 lists
-> what it keeps from this draft and what it changes.
+> **Superseded.** Product decisions are in
+> [`micropython_pivot_plan.md`](micropython_pivot_plan.md). The phase
+> contract that folds the three reviews is
+> [`mpy_review/merged_plan.md`](mpy_review/merged_plan.md). This file is
+> the original draft. Do not implement from it. Where this draft disagrees
+> with the pivot plan, the pivot plan governs (pivot plan §9).
 
 Status: **plan, not started.** Audit snapshot: [pycore](https://github.com/ColtonHarris999/pycore) `main` @ `371dc007f9`, 2026-10-13.
 
