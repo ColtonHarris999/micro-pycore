@@ -139,8 +139,8 @@ Containers and strings:
 | Tag | Word 0 | Word 1 | Word 2 | After that |
 | --- | --- | --- | --- | --- |
 | MUT_COLLEC list | length | pointer to the item array | — | the array is one word per item |
-| MUT_COLLEC dict | used count | allocated slots | pointer to the table | each table slot is a key word then a value word |
-| MUT_COLLEC set | used count | allocated slots | pointer to the table | one word per slot |
+| MUT_COLLEC dict | used count in bits `[30:0]`. Bit 31 is the object indicator, `0` at creation | allocated slots | pointer to the entry table | word 3 is the types-table pointer, `0` until the indicator is set. Each entry is a key word then a value word |
+| MUT_COLLEC set | used count in bits `[30:0]`. Bit 31 is the object indicator, `0` at creation | allocated slots | pointer to the entry table | word 3 is the types-table pointer, `0` until the indicator is set. One word per slot |
 | MUT_COLLEC bytearray | length | capacity | pointer to the buffer | — |
 | TUPLE | length | element 0 | element 1 | elements continue in place |
 | STR | number of bytes | hash | pointer to the bytes | — |
@@ -154,7 +154,7 @@ there is none. Fields start at word 2.
 | Kind | Value | Fields |
 | --- | --- | --- |
 | INSTANCE | 1 | `__dict__` |
-| TYPE | 2 | `tp_dict`, `tp_base`, `tp_name` |
+| TYPE | 2 | `tp_dict`, `tp_base`, `tp_name`, `tp_hash` |
 | BOUND_METHOD | 3 | function, self |
 | BUILTIN | 4 | builtin id, bound self |
 | EXCEPTION | 6 | exception type, `args` tuple |
@@ -164,6 +164,45 @@ there is none. Fields start at word 2.
 
 Kind values match pycore where pycore has that kind. Range and iterator
 have their own tags again, because `MUT_COLLEC` freed those codes.
+
+### 0.7 Dict and set hashing (locked)
+
+The container accelerator rehashes on resize. It can hash `None`, `True`,
+`False`, ints, floats, qstrs, strings, bytes, and tuples of those. It can
+also hash an object by its address, which is the default hash. It cannot
+call a Python `__hash__`. `__hash__` is a word on the type object,
+`tp_hash`, not an entry in `tp_dict`. The tag on that word is empty
+`CONTROL` for the default hash, `None` for unhashable, or a function
+pointer for a custom hash.
+
+The object indicator replaces the old contamination bit. That bit used to
+live in the 128-bit handle. The handle is now only a pointer, so the bit
+lives in the header.
+
+An `OBJECT` key, or a tuple that contains one, sets bit 31 of word 0 the
+first time it is inserted. The bit stays set for the life of the dict or
+set. The same insertion allocates the types table if word 3 is `0`, and
+adds the object's type if that type is not already in the table. Ints,
+floats, `None`, `True`, `False`, strings, bytes, and tuples of those do
+not set the bit. The types table is a private array of type pointers,
+grown by the core and hashed by identity. It is not a Python set, so this
+protocol does not apply to it.
+
+On resize, bit 31 clear means the accelerator receives the dict or set
+alone. Bit 31 set means the core walks the types table first:
+
+1. Build a list whose capacity is the number of types still to check, so
+   that list does not resize. For each type whose `tp_hash` is a function,
+   append that type.
+2. If the list is empty, send the dict or set to the accelerator.
+3. If it is not, build a computed-hash dict. Its keys and values are
+   ints, so its own object indicator stays clear. Walk every occupied
+   slot. When the key's type, or a type inside a tuple key, is in the
+   list, call that type's `tp_hash` and store the result under the slot
+   number.
+4. Send the original dict or set and the computed-hash dict to the
+   accelerator. The accelerator uses a stored hash for those slots and
+   hashes every other key itself.
 
 Bytecode and UTF-8 in flash have no tag nibbles. A frozen tuple or const
 pool uses the same word-plus-nibble layout. The first 8 bytes of flash
