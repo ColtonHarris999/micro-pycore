@@ -15,6 +15,16 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
+# A user-local CPython (for example from uv) earlier on PATH hides the shared
+# interpreter installed below. Host baseline tests need that shared build.
+rm -f \
+  "${HOME}/.local/bin/python3.14" \
+  "${HOME}/.local/bin/python3.14-config"
+rm -rf \
+  "${HOME}/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu" \
+  "${HOME}/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu"
+hash -r
+
 "${SUDO[@]}" apt-get update
 "${SUDO[@]}" apt-get install -y --no-install-recommends \
   build-essential \
