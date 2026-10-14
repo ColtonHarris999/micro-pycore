@@ -67,7 +67,7 @@ interrupts, `machine`, `time`, and `gc`. Programs arrive as `.mpy` from host
 5. `sys.platform` is `upycore`. `sys.implementation.name` is `upycore`.
 6. The nightly GC soak is off. `.github/workflows/gc-nightly.yml` has no schedule.
 7. Benchmarks are simulation only. No boards. Compare the simulator with the unix oracle at the same heap. Published board numbers are not a gate.
-8. The heap object header is the one item not yet locked. Do not invent one.
+8. Heap objects follow the existing pycore split (§0.6). The register tag names a list, dict, set, tuple, string, or bytes. Function, type, instance, and the other shared kinds use the `OBJECT` tag and a kind word at the start of the object.
 
 ### 0.5 Value representation (locked)
 
@@ -118,6 +118,49 @@ reserve, spill, and tag nibbles for that budget are 16 KB. The rest of
 the 256 KB SRAM is the GC pool, the schedule ring, and the handler table.
 The old 256-entry ring and the 256 KB spill at `0xF40000` do not come
 along.
+
+### 0.6 Heap objects (locked)
+
+Same split as `pycore/docs/object_model.md`. A list, dict, set, tuple,
+string, or bytes has its own register tag, so memory starts at the first
+field. A function, type, instance, bound method, builtin, exception,
+cell, module, range, or iterator uses the `OBJECT` tag. Its first word
+is the kind. The collector reads that word and traces the fields for
+that kind.
+
+Words are 32-bit payloads with a tag nibble each. There is no 32-byte
+stride.
+
+Containers and strings:
+
+| Tag | Word 0 | Word 1 | Word 2 | After that |
+| --- | --- | --- | --- | --- |
+| LIST | length | pointer to the item array | — | the array is one word per item |
+| TUPLE | length | element 0 | element 1 | elements continue in place |
+| DICT | used count | allocated slots | pointer to the table | each table slot is a key word then a value word |
+| SET | used count | allocated slots | pointer to the table | one word per slot |
+| STR | number of bytes | hash | pointer to the bytes | — |
+| BYTES | length | pointer to the buffer | capacity, `0` when immutable | bit 0 of a flags nibble on word 0 is set for `bytearray` |
+
+`OBJECT` kinds, in the first word. Word 1 is the type pointer, or 0 when
+there is none. Fields start at word 2.
+
+| Kind | Value | Fields |
+| --- | --- | --- |
+| INSTANCE | 1 | `__dict__` |
+| TYPE | 2 | `tp_dict`, `tp_base`, `tp_name` |
+| BOUND_METHOD | 3 | function, self |
+| BUILTIN | 4 | builtin id, bound self |
+| EXCEPTION | 6 | exception type, `args` tuple |
+| CELL | 7 | contents |
+| FUNCTION | 8 | code pointer, closure tuple |
+| RANGE | 9 | start, stop, step |
+| ITER | 10 | iterable pointer, index |
+| MODULE | 11 | globals dict |
+
+Kind values match pycore where pycore has that kind. Range and iterator
+were their own tags there. The 4-bit tag space is full, so they are
+`OBJECT` kinds here.
 
 Bytecode and UTF-8 in flash have no tag nibbles. A frozen tuple or const
 pool uses the same word-plus-nibble layout. The first 8 bytes of flash

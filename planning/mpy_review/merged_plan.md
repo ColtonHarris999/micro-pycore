@@ -240,6 +240,14 @@ Complex arithmetic is a sequence on the binary32 float unit. There is no
 separate complex ALU. The integer unit is 64 bits wide and reads one
 register or the INT64 pair.
 
+Heap objects follow the existing pycore split. LIST, DICT, SET, TUPLE,
+STR, and BYTES start at their first field, because the register tag
+already names them. FUNCTION, TYPE, INSTANCE, and the other kinds that
+share the OBJECT tag store the kind in word 0 and the type pointer in
+word 1. The field lists and kind numbers are pivot plan §0.6. Range and
+iterator are OBJECT kinds. Pycore gave them their own tags, and this
+4-bit tag space has no code left for that.
+
 Accelerators that stay on this hart: the container accelerator (list,
 tuple, dict, set, bytearray), the string accelerator (ASCII case
 conversion; Unicode indexing stays), the integer ALU, and the float unit.

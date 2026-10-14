@@ -39,7 +39,9 @@ After this review, the owner required three things:
    stay in four registers; the register file is one 36-bit array; case
    conversion is ASCII-only; `sys.platform` and `sys.implementation.name`
    are `upycore`; the nightly GC soak is off; benchmarks are simulation
-   only. The heap object header is still unlocked.
+   only. Heap objects follow the pycore split: the register tag names a
+   container or string, and an `OBJECT` value stores its kind in the
+   first memory word (pivot plan §0.6).
 
 `plan_A.md`, `plan_B.md`, `plan_C.md`, and `base_plan.md` are the
 historical inputs. They are not edited to match these decisions. The
