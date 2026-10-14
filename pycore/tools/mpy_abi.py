@@ -168,6 +168,7 @@ IT = {
     "SET": 3,        # [0] set [1] slot index
     "PYOBJ": 4,      # [0] object with __next__
     "STR": 5,        # [0] str or qstr [1] byte index
+    "HEAPITER": 6,   # [0] heap ITER object; its own four words hold the state
 }
 
 # ---------------------------------------------------------------------------
@@ -302,8 +303,11 @@ HOOKS = [
     "_unpack",        # _unpack(x, before, after): a tuple of exactly the unpacked items
     "_kwdict",        # _kwdict(x): a ** argument that is not a dict, to a dict
     "__build_class__",
-    "_call",          # _call(obj, args, kwargs): callables the RTL cannot call
+    "_call",          # _call(obj, args, kw): callables the RTL cannot call
     "_irq_uncaught",
+    "_bind",          # _bind(fun, args, kw): locals tuple for a call the RTL cannot bind
+    "_super_method",  # _super_method(type, obj, name): super().name
+    "_warn",          # _warn(code): print a runtime warning to stderr
 ]
 HOOK_ID = {name: i for i, name in enumerate(HOOKS)}
 
@@ -487,6 +491,7 @@ CONT = [
     "FOR_NEXT",      # __next__ returned: STOP ends the loop (AUX: exit pc), else push
     "GETITER",       # __iter__/_getiter returned: an iterator for slot AUX, re-run
     "INIT_ARGS",     # __init__ of an exception subclass returned: must be None, push AUX
+    "BIND",          # _bind returned the locals tuple of this frame: store them and start
 ]
 
 # One-shot overrides the REPLACE/GETITER/TRUTH continuations hand to the

@@ -111,6 +111,7 @@ localparam logic [31:0] ABI_IT_DICT = 32'd2;
 localparam logic [31:0] ABI_IT_SET = 32'd3;
 localparam logic [31:0] ABI_IT_PYOBJ = 32'd4;
 localparam logic [31:0] ABI_IT_STR = 32'd5;
+localparam logic [31:0] ABI_IT_HEAPITER = 32'd6;
 
 localparam logic [7:0] ABI_T_OBJECT = 8'd1;
 localparam logic [7:0] ABI_T_TYPE = 8'd2;
@@ -234,6 +235,9 @@ localparam logic [7:0] ABI_HOOK_KWDICT = 8'd16;
 localparam logic [7:0] ABI_HOOK_BUILD_CLASS = 8'd17;
 localparam logic [7:0] ABI_HOOK_CALL = 8'd18;
 localparam logic [7:0] ABI_HOOK_IRQ_UNCAUGHT = 8'd19;
+localparam logic [7:0] ABI_HOOK_BIND = 8'd20;
+localparam logic [7:0] ABI_HOOK_SUPER_METHOD = 8'd21;
+localparam logic [7:0] ABI_HOOK_WARN = 8'd22;
 
 localparam logic [7:0] ABI_ERR_NAME = 8'd0;
 localparam logic [7:0] ABI_ERR_NOT_CALLABLE = 8'd1;
@@ -364,6 +368,7 @@ localparam logic [7:0] ABI_CONT_POP2_PUSH = 8'd11;
 localparam logic [7:0] ABI_CONT_FOR_NEXT = 8'd12;
 localparam logic [7:0] ABI_CONT_GETITER = 8'd13;
 localparam logic [7:0] ABI_CONT_INIT_ARGS = 8'd14;
+localparam logic [7:0] ABI_CONT_BIND = 8'd15;
 
 localparam logic [7:0] ABI_SIM_HALT = 8'd0;
 localparam logic [7:0] ABI_SIM_STDERR = 8'd1;
