@@ -1,6 +1,7 @@
 # MicroPython microcontroller core
 
 Status: **plan, not started.** Audit snapshot: [pycore](https://github.com/ColtonHarris999/pycore) `main` @ `371dc007f9`, 2026-10-13.
+Review: holes found 2026-10-14, recorded in [Review findings](#review-findings). Where a finding names a phase, that finding is part of the phase until the phase text is revised.
 
 This file moved here from pycore branch `cursor/micropython-mcu-plan-3b27`
 (`bbcd1d9328`). This repository is the sibling tree that plan calls
@@ -139,11 +140,15 @@ exact opcode numbers and bit-masks are not, so they are read from the tag
 rather than written here.
 
 - **Bytecode** is a variable-length byte stream. The first byte is the
-  opcode. Small immediates are folded into the opcode by the multi-opcode
-  scheme. Larger operands follow as trailing bytes. A function body starts
-  with a prelude: state size, exception-stack size, flags, then the bytes.
-  The persistent file is `.mpy`. There is no `CACHE` opcode and no
-  `EXTENDED_ARG` word.
+  opcode. Some opcodes fold a small immediate into the opcode byte (the
+  multi-opcode groups). The others take a qstr index, a varuint, or a
+  1- or 2-byte branch offset, selected by `MP_BC_FORMAT` in the tag's
+  `py/bc0.h`. A function body starts with the bit-interleaved prelude in
+  `py/bc.h` (state, exception-stack depth, scope flags, argument counts),
+  then source-info and closure bytes, then the opcodes. The persistent
+  file is `.mpy`. There is no `CACHE` opcode and no `EXTENDED_ARG` word.
+  [Finding 2](#2-the-mpy-image-is-larger-than-phase-1-says) is the list
+  phase 0's catalog has to record.
 - **Names** are qstrs, integer indexes into a pool of interned strings.
   Globals and attributes key on qstr.
 - **The object word** on a 32-bit port is `MICROPY_OBJ_REPR_A` in
@@ -213,7 +218,7 @@ show up in a measurement; it is not part of v1.
 ### Peripheral registers (v1)
 
 Word offsets from `0x4000_0000`. Phase 5 is allowed to add registers. It
-is not allowed to move these four.
+is not allowed to move these six.
 
 | Offset | Name | Access |
 | --- | --- | --- |
@@ -254,7 +259,8 @@ machine than 82,000 lines.
 
 Each phase ends with a test that a later phase is not allowed to break.
 Host tests do not need Verilator. Device tests share one `mpycore`
-simulator.
+simulator. Holes in this scope are [Review findings](#review-findings);
+an implementer follows the finding where it names a phase.
 
 ### Phase 0 — Pin the release
 
@@ -408,6 +414,9 @@ a source of `mpycore` tasks.
 - `match`, `except*`, format-spec f-strings, and the CPython descriptor
   protocol. If the pinned MicroPython accepts a program, v1 still only
   claims the phases above.
+- A filesystem or `open`, threads, `input` and the REPL, `sys.stdin`,
+  `@micropython.native` / viper / inline asm, finalisers, weakrefs, and
+  `id()`. SPI, I2C, and ADC stay in phase 6. [Finding 10](#10-non-goals-to-add).
 
 ## Risks
 
@@ -467,5 +476,456 @@ The first pages, written with the phase that makes them true:
 | `mpycore/docs/memory_map.md` | 0 |
 | `mpycore/docs/image.md` | 1 |
 | `mpycore/docs/architecture.md` | 2 |
+| `mpycore/docs/object_model.md` | 2, extended in 3 |
+| `mpycore/docs/calling.md` | 2 |
+| `mpycore/docs/builtins.md` | 2, extended each phase |
 | `mpycore/docs/gc.md` | 3 |
+| `mpycore/docs/exceptions.md` | 4 |
 | `mpycore/docs/peripherals.md` | 5 |
+
+## Review findings
+
+Holes found 2026-10-14 against current MicroPython `master` (`.mpy` 6.3:
+`py/bc.h`, `py/bc0.h`, `py/persistentcode.h`, `py/obj.h`,
+`mpy-cross/mpconfigport.h`, `ports/unix`) and against pycore `371dc007`.
+The phase text above is the original scope. A finding here is an open hole
+in that scope.
+
+### 1. The oracle build is a different machine from v1
+
+The stock unix port does not implement the v1 locks, so stdout against
+that binary will not match a core that does.
+
+| Stock unix port (`variants/standard`) | v1 lock |
+| --- | --- |
+| `MICROPY_LONGINT_IMPL_MPZ` | Long int off. Overflow is `OverflowError` |
+| `MICROPY_FLOAT_IMPL_DOUBLE` | Float off. With float compiled out, `/` is a `TypeError` (`unsupported types for ...`). With float on, `/` returns a float |
+| 64-bit `MICROPY_OBJ_REPR_A`. Small int is 63 bits because `mp_int_t` is pointer-sized | 31-bit small int in a 32-bit word. Range is `-2**30 .. 2**30-1` |
+| GC block is `4 * sizeof(word)` = 32 bytes | A 32-bit repr A block is 16 bytes |
+| Heap is separate from the C stack. `-X heapsize=256k` sizes that heap only | 256 KB SRAM also holds call frames and the schedule slots |
+| Finalisers, scheduler, asyncio, VFS, and a unix `machine` are on | Most of those are out of v1 |
+| Uncaught tracebacks go to stderr (`mp_obj_print_exception` on `mp_stderr_print`). Exit status is 1, and `SystemExit` is the `FORCED_EXIT` encoding in `ports/unix/main.c` | The harness as written stores stdout |
+| `MICROPY_ERROR_REPORTING_DETAILED` | Message text changes with the reporting level |
+
+`mpy-cross` defaults `small_int_bits` to 31, which is the right header
+byte, and it is built with mpz and double. An int literal that does not
+fit in 31 bits, and any float literal, is a const object in the `.mpy`.
+The stock unix port executes both.
+
+Phase 0 records a config next to the tag:
+
+- A checked-in mpconfig fragment: long int off, float off, complex off,
+  repr A, 32-bit `mp_int_t`, GC on, finalisers off, async off, the
+  scheduler depth from [finding 7](#7-peripherals-irqs-and-the-machine-module).
+  The unix oracle is built from that fragment. The core implements the
+  same fragment.
+- `mpy-cross` is built from the same submodule commit in CI. A distro
+  `mpy-cross` is the wrong bytecode.
+- Flags locked with the tag: `-msmall-int-bits=31`, no `-march` (bytecode,
+  arch `NONE`), `-O0` until a revision says otherwise. Header byte 3
+  (small-int bits) is a field in `mpycore.json`, beside version and
+  sub-version.
+- Upstream's loader ignores sub-version on bytecode-only files. It checks
+  sub-version only when the arch nibble is not `NONE`, and it rejects the
+  file when `header[3] > MP_SMALL_INT_BITS`. The loader's acceptance test
+  is the major version plus the small-int width. This plan still treats
+  the pinned tag as the ISA, and CI builds `mpy-cross` from that tag.
+- From phase 3 the oracle heap flag is the GC heap only. SRAM is that heap
+  plus the call-stack reserve and the alloc table
+  ([finding 6](#6-gc)).
+- The diff includes stderr once phase 4 prints tracebacks, and it includes
+  the process exit status.
+
+Right shifts follow the pin's small-int path, which caps a shift count at
+`mp_int_t` width minus one. That width has to be 32 on the oracle or large
+shifts diverge.
+
+### 2. The `.mpy` image is larger than phase 1 says
+
+Phase 1's layout ("qstr pool, const objects that are immediates or qstrs,
+raw bytecode") cannot represent the function its own exit test decodes.
+`def f(): return 1 + 2` is a child raw-code element. The container, from
+`persistentcode.h` and the `.mpy` file docs:
+
+- Four-byte header: `'M'`, major, feature/arch/minor, small-int bits. Bit 6
+  of the feature byte means an architecture-flags vuint follows. v1 rejects
+  arch other than `NONE` at image build. That is `@micropython.native`,
+  viper, and inline asm.
+- One file-level qstr table and one const-object table, shared by every
+  nested raw code.
+- With `MICROPY_EMIT_BYTECODE_USES_QSTR_TABLE` (on for persistent code),
+  qstr operands in the bytecode are indices into that file-level table.
+  Execute-in-place leaves the bytecode bytes as the writer emitted them
+  and materializes the table. Patching the bytecode to global qstr ids is
+  the other legal design; the plan has to pick one.
+- Qstrs with id `<= MP_QSTR_zip` (`QSTR_LAST_STATIC`) are stored as the id
+  alone. They assume the runtime has the static list `makeqstrdata.py`
+  generated for that `mpy-cross`. Phase 0 snapshots that list. The image
+  tool uses it as the low ids.
+- Const kinds the writer emits: child raw code (`MP_PERSISTENT_OBJ_FUN_TABLE`),
+  `None` / `False` / `True` / ellipsis, `str`, `bytes`, `int`, `tuple`,
+  and, because this `mpy-cross` has them, `float` and `complex`. v1 accepts
+  a kind only in the phase that executes it. Float, complex, and mpz ints
+  are a named image-build error. Dropping one is a wrong program.
+- Each raw code is a vuint (kind, length, has-children), the code bytes,
+  then its children. Bytecode is the only kind v1 loads.
+- The prelude is the bit-interleave in `MP_BC_PRELUDE_SIG_DECODE`:
+  `n_state`, `n_exc_stack`, scope flags, `n_pos_args`, `n_kwonly_args`,
+  `n_def_pos_args`. A second interleave is `n_info` and `n_cell`. Then
+  `n_info` source-info bytes (simple name, argument names, line-number
+  encoding) and `n_cell` closure bytes. The first opcode is after those.
+  Phase 1's decoder returns all of them, including the opcode-start offset
+  and the line-info span. Phase 4 tracebacks use the line-info span. A
+  decoder that stops at "state, exception stack, flags" fetches source-info
+  bytes as opcodes.
+- The four prelude scope-flag bits are generator, `**kwargs`, `*args`,
+  and a keyword-default dict (`MP_SCOPE_FLAG_DEFKWARGS`). Positional
+  defaults are the separate `n_def_pos_args` field. Any of these that the
+  current phase does not implement is an image-build reject.
+- The image is a table of frozen modules plus an entry qstr, including
+  while only one module exists. Phase 4 import then adds a module. It
+  does not invent a second file format.
+- The decoder's oracle is the submodule's `tools/mpy-tool.py -xd`. A
+  round-trip through the same parser that just wrote the dump does not
+  catch a shared mistake.
+
+Phase 0's opcode catalog records a format per opcode: multi-opcode
+immediate (`LOAD_CONST_SMALL_INT` covers −16..47, `LOAD_FAST` /
+`STORE_FAST` cover 0..15, plus unary and binary groups), or byte / qstr /
+varuint / offset. Offsets are one byte or two, and the signed ones are
+biased. `UNWIND_JUMP` and the closure makers carry one extra byte. The PC
+and the IRQ check advance on an opcode boundary, after those bytes.
+
+### 3. Phase 2 requires a call and forbids the objects a call needs
+
+`print(1 + 2)` is `LOAD_GLOBAL print`, two small-int loads, a binary op,
+`CALL_FUNCTION`, `POP_TOP`, load `None`, return. `print` is a ROM builtin.
+This core has no C function pointer to call. The CPython hart's `BI_*`
+call ids were that mechanism, and the disposition table leaves them on
+that hart without naming a replacement.
+
+Phase 2 locks a native-builtin call. A ROM object carries a type tag the
+call FSM recognizes and a builtin number. Phase 5's MMIO stores use the
+same mechanism. Bytecode has no raw pointer load, so `machine.Pin` and
+`machine.mem32` are builtins that perform the store. The builtin set for
+each phase is `mpycore/docs/builtins.md`.
+
+`LOAD_GLOBAL` searches the module dict and then the builtins dict. A
+module dict of immediates does not contain `print`. Reset is part of this
+phase: PC at the first opcode of the entry module, one code state on the
+stack, builtins and `__name__` already installed.
+
+`def` plus a call is `MAKE_FUNCTION` on a child raw code. Upstream
+allocates a function object there (bytecode pointer, globals, defaults).
+Phase 2 lists that call as in scope and lists heap allocation as out of
+scope. The phase picks one of these, and the exit test uses that one:
+
+- The module body is the only Python callable. The only call is native
+  `print`. `def` arrives in phase 3 with the function object.
+- Or a frozen function with no defaults, no free variables, and no keyword
+  arguments is a ROM function whose globals pointer is the single module
+  dict filled at reset. `MAKE_FUNCTION` of anything else is an image-build
+  reject.
+
+The counted loop is a `while` on small ints. `for i in range(n)` allocates
+a `range` and emits `GET_ITER` / `FOR_ITER`, which [finding 4](#4-language-features-that-no-phase-owns)
+places in phase 3.
+
+The integer subset includes the opcodes ordinary expressions emit:
+
+- `POP_TOP`, `DUP_TOP`, `DUP_TOP_TWO`, `ROT_TWO`, `ROT_THREE`.
+- Inplace binary ops. `+=` is a different opcode byte from `+`. Upstream's
+  bytecode binary-op group has 35 entries, inplace included.
+- `//` and `%`, using Python's floor-division sign (`mp_small_int_floor_divide`
+  / `mp_small_int_modulo` in the pin). Division by zero halts with a sim
+  reason until phase 4 makes it `ZeroDivisionError`. `/` is `TypeError`
+  while float is off.
+- Shifts, invert, and power. A negative shift is `ValueError`. A negative
+  power is `ValueError` (`negative power with no float support`) while
+  float is off. `(-2**30) // -1` and unary minus of `-2**30` overflow.
+- Compare results are the `True` / `False` immediates. `is` / `is not` are
+  identity. `POP_JUMP_IF_*` uses truthiness. `and` / `or` are
+  `JUMP_IF_*_OR_POP`.
+- `True` and `False` are integers. `True + True` is `2`.
+- Until phase 4, small-int overflow halts with a sim reason. After it, the
+  reason is `OverflowError`.
+
+pycore's floor-division sign rules are the rules to reimplement at 31
+bits. The 64-bit datapath and the overflow-to-bigint trap stay on that
+hart.
+
+### 4. Language features that no phase owns
+
+The pinned `mpy-cross` emits these for ordinary programs. Each one is
+either given a phase here or rejected by name at image build. Until
+phase 4, an opcode the running phase does not implement halts with the
+unsupported-opcode reason. From phase 4 the same case raises
+`NotImplementedError` with the pin's message (`opcode`), which is what
+`vm.c`'s default dispatch does.
+
+| Feature | Why it is in scope | Phase |
+| --- | --- | --- |
+| `LOAD_METHOD` / `CALL_METHOD`, and the all-zero method sentinel | The phase 3 exit test appends to a list. `LOAD_METHOD` pushes `(method, self)` or `(builtin, MP_OBJ_NULL)`. `CALL_METHOD` tells those apart | Phase 3. Phase 4's bound-method work is the allocating `LOAD_ATTR` path. The emitter uses both |
+| `LOAD_SUBSCR` / `STORE_SUBSCR`, `BUILD_SLICE` | `xs[i]` and slices | Phase 3 |
+| `UNPACK_SEQUENCE` / `UNPACK_EX` | `a, b = ...` | Named in phase 3 or 4 |
+| `GET_ITER`, `FOR_ITER`, `GET_ITER_STACK`, `range` | A `for` loop is not a generator. End of iteration is the `MP_OBJ_STOP_ITERATION` word, which is the all-zero word, and it is not a raised `StopIteration` | Phase 3, ahead of the phase 6 generator work |
+| `STORE_COMP` and comprehensions | Inlined in this bytecode | Phase 3 if list displays are in; otherwise an image-build reject |
+| Closures: `MAKE_CLOSURE`, `LOAD_DEREF` / `STORE_DEREF`, cells | Nested functions and callbacks that capture locals. Phase 2 excludes them, and no later phase takes them | Its own phase, before a scheduled callback is allowed to be a closure |
+| Keyword arguments and defaults | The call varuint packs the positional count in the low 8 bits and the keyword count in the next 8. Keywords sit on the stack as `(qstr, value)` pairs. The prelude already carries `n_def_pos_args` | Phase 4, or a reject when the prelude or the call encoding has them |
+| `*args` / `**kwargs` | `CALL_FUNCTION_VAR_KW`, `CALL_METHOD_VAR_KW` | A later row, named |
+| `super()` | `LOAD_SUPER_METHOD` | Phase 4 or a later row, named |
+| `del`, `pop` | Dict and set deletion use tombstones (`MP_OBJ_SENTINEL`) | Named with the opcode that deletes |
+| `set` | Iteration order follows the hash table. A printed set matches the oracle only when the hash and the growth thresholds match. Dict order is insertion order and is observable with any layout | Dict order is part of phase 3. Set stays out until the hash is specified |
+| `bytearray` | Mutable buffers for drivers. `bytes` is immutable | Phase 3 or 5 |
+| f-strings and t-strings | This `mpy-cross` enables `MICROPY_PY_FSTRINGS` and `MICROPY_PY_TSTRINGS`. They desugar into calls and builds no phase lists | Image-build reject until a phase owns the opcodes |
+| `property` and descriptors | On at the unix port's feature level | A later row, named |
+
+Phase 4 `import` includes: one module object per name, cached for the
+second import; `from m import name`; `__name__` set on the module; a
+missing module is `ImportError`. `import *` and circular import are in
+that exit test or named as later.
+
+### 5. Runtime shape the phases assume and never specify
+
+Repr A is the object word, as the lock says. These consequences go in
+`mpycore/docs/object_model.md` with the masks:
+
+- A pointer object's low bits are `00`, so every object is 4-byte aligned.
+  The first word is a type pointer. Builtin and type objects live in flash.
+- The all-zero word is `MP_OBJ_NULL` and `MP_OBJ_STOP_ITERATION`. It is not
+  `None`. `None`, `False`, and `True` are immediates. GC does not follow a
+  zero word. An empty local, an empty map slot, and the end of an iterator
+  are that word.
+- `MP_OBJ_SENTINEL` is the word `4` when debug sentinels are off, which is
+  the v1 config. SRAM starts at `0x2000_0000`, so `4` is never a heap
+  pointer. Tombstones use it.
+- `bool` is an integer immediate.
+
+Phase 3 may use a different struct layout from the C VM and still has to
+implement the slots the opcodes call: unary, binary, subscript, attribute,
+call, iter, next, and print. Method lookup walks the type dict. Object
+identity is the pointer: `a = []; b = a; b.append(1)` prints `[1]` for `a`.
+
+One activation record matches `mp_code_state_t`. The header holds the
+function object, ip, value sp, exception-stack index, and globals. Then
+`n_state` object words, then `n_exc_stack` entries of `(handler_ip,
+val_sp, prev_exc)` placed immediately after that array (`vm.c` takes
+`exc_stack` as `state + n_state`). Decoded `n_state` already includes
+locals and stack depth. Locals sit at the high end: `fastn =
+&state[n_state - 1]` is local 0, and local `i` is `fastn[-i]`. The value
+stack grows upward from `state[0]` (`PUSH` is `*++sp`, and
+`mp_setup_code_state` sets `sp` to `&state[0] - 1`). Locals and the value
+stack grow toward each other. A root scan of "the words from a stack base
+through SP" misses every local. The root is the whole `state[0 ..
+n_state)` of each live frame, plus `prev_exc` in the exception entries.
+An SP that reaches a live local is a simulator halt. Nested calls chain
+these records in the SRAM reserve outside the GC heap, so the phase 3
+heap limit is the same byte count the oracle's `-X heapsize` uses.
+
+Exception handlers are pushed by `SETUP_EXCEPT`, `SETUP_FINALLY`, and
+`SETUP_WITH`. This bytecode has no CPython exception table, and pycore's
+table walk does not execute it. `END_FINALLY` and `WITH_CLEANUP`
+distinguish no exception, re-raise, and an unwinding return or jump.
+`UNWIND_JUMP` is how `break`, `continue`, and `return` leave a `with` or
+`finally`. The phase 4 exit test (`with`, plus a caught
+`ZeroDivisionError`) runs that path. `mpycore/docs/exceptions.md` is the
+page that writes the entries down.
+
+`except` walks base types, so an exception is an instance with `.args`,
+and constructing one allocates. Phase 4's type list is missing the ones
+ordinary programs raise: `NameError`, `ValueError`, `RuntimeError`,
+`ImportError`, `AssertionError`, `StopIteration`, and the `Exception` /
+`BaseException` roots. `LOAD_FAST` of an unassigned local raises
+`NameError` (`local variable referenced before assignment` in `vm.c`),
+which is the message to match. `RAISE_LAST` and `RAISE_FROM` are in
+phase 4 or are a named reject.
+
+An uncaught exception prints the pin's message text and a traceback from
+the prelude line info, then halts. The harness compares that text on
+stderr. Default instance repr contains the address (`<C object at 0x...>`).
+The diff canonicalizes those addresses, and the phase 4 program can avoid
+printing a default repr. `id()` stays out of v1.
+
+Allocating the traceback can itself fail. The unix oracle keeps
+`MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF`. v1 has a fixed non-GC buffer for
+that case, or an out-of-memory traceback is a silent halt. Pick one in
+`exceptions.md`.
+
+Recursion depth is a locked integer on the oracle (stack check) and on the
+core, and the error is `RuntimeError`. The SRAM reserve holds that many
+maximum-sized frames. A deeper call raises, and does not write the heap.
+
+### 6. GC
+
+The safe-point rule (abort the opcode with no architectural commit,
+collect, retry) is the hardware shape. The collector still has to match
+this bytecode's mark-sweep:
+
+- Roots, written in `mpycore/docs/gc.md` before the engine: the live
+  code-state chain (the whole `state[]` array of each frame, not only the
+  value-stack slice below SP, plus `prev_exc`), module globals,
+  the builtins dict, `sys.modules` once import exists, the schedule slots
+  and IRQ callback slots once phase 5 exists, and every pointer register
+  of the container FSM, including a buffer that has been allocated and not
+  yet published. The dropped-reference test in the risks section does not
+  cover the FSM register.
+- Mark follows a word only when it addresses a block head in the SRAM heap
+  window. Type pointers and bytecode live in flash. The VM does not root
+  an interior pointer. A conservative scan of every SRAM word is a
+  different collector and is not the v1 rule.
+- 256 KB is the SRAM size. Lock the split: call-stack reserve, schedule
+  queue, then the GC region. The alloc table is 2 bits per block and the
+  block is 16 bytes, inside the GC region, matching upstream. The oracle
+  heap byte count is that region. Usable blocks are what the `MemoryError`
+  test compares. A 64-bit unix heap with 32-byte blocks will not raise on
+  the same program.
+- Upstream also collects when `MICROPY_GC_ALLOC_THRESHOLD` is crossed, not
+  only when an allocation does not fit. The core uses the same threshold
+  policy as the oracle build. Otherwise one side survives a program the
+  other rejects.
+- A collection that does not free a large enough block raises
+  `MemoryError`. Publish of a grown container is the last write, and the
+  new buffer is reachable from a root before any collection point inside
+  the command.
+- Mark-stack overflow has a defined behavior. Upstream uses a fixed stack
+  (`MICROPY_ALLOC_GC_STACK_SIZE`, default 64) and rescans the heap when it
+  overflows. A deep live chain is a phase 3 test. The CPython hart's
+  collector has already failed this way (`pycore/docs/gc.md` mark-stack
+  note).
+- Finalisers and weakrefs are off on the core and on the oracle. A
+  `__del__` that prints would desynchronize stdout.
+- v1 qstrs live in flash. Runtime code does not intern, and the qstr pool
+  is not a GC root. A later `getattr` of a dynamic string changes this.
+- The bytecode ip points into the middle of a flash function. The function
+  object on the code state is the root that keeps a heap function alive.
+  Flash bytecode itself is not collected.
+
+### 7. Peripherals, IRQs, and the `machine` module
+
+The register table has six words. The sentence above it now locks all
+six; the original text said four.
+
+The phase 5 host model and the RTL share these semantics, which the
+register table does not state:
+
+- Little-endian. A store to flash halts. v1 SRAM and MMIO accesses are
+  words, except the UART data byte. An unaligned access halts.
+- `GPIO_OUT` is readable, so a blink can toggle through a
+  read-modify-write. GPIO input, direction, and pin IRQ are out of v1.
+- `TIMER_COUNT` needs a width, a definition of a tick (cycle, or a
+  testbench step), whether a match reloads the counter, and whether the
+  match sets a sticky IRQ bit that write-1-to-clear acknowledges. Compare
+  value 0 needs a meaning. "Write reloads the compare" leaves those open.
+- `UART_RX` is one byte plus a valid bit. A second byte that arrives
+  before the read either overwrites or is dropped, and the IRQ-pending
+  rule for that case is fixed. There is no FIFO, baud, or TX-ready bit.
+  `print` and the echo program share `UART_TX`, so the echo's expected
+  stream includes any `print` bytes.
+- The flash wait state is paid per byte fetched. A multi-byte opcode pays
+  it on every extra byte. v1 has no fetch buffer, as the lock says.
+
+The latch and `micropython.schedule` are different events. Phase 5's text
+runs the callback from the latch and then forbids it to allocate.
+
+- The latch sets a status bit. It does not run Python and does not
+  allocate.
+- At the next opcode boundary the core may run one queued callback as a
+  normal call. That call may allocate and may call other functions.
+  "Callbacks do not nest" means a second IRQ waits until the callback
+  returns.
+- A callback that appends to a list is legal. Treating allocation as
+  `MemoryError` makes the blink test pass and makes a driver callback
+  fail. That diverges from MicroPython; the phase 5 text drops that rule.
+- Queue entries are `(function, argument)`. Upstream's default depth is 4
+  (`MICROPY_SCHEDULER_DEPTH`). v1 locks a depth. A full queue raises
+  `RuntimeError`, which is what `micropython.schedule` does.
+- No MMIO register holds the Python callable. A builtin stores it, and
+  that slot is a GC root ([finding 6](#6-gc)). The timer callback is
+  invoked with the timer object. Phase 5 therefore includes the slice of
+  `machine.Timer`, `machine.Pin`, and `machine.UART` that the blink and
+  echo programs call. Unix `machine` is a different peripheral model
+  (`machine.mem*` and a host pin). The host model of these registers is
+  the oracle for edges; the unix port remains the oracle for `print`.
+- `time.ticks_ms` and `time.sleep_ms` are how MCU programs wait. Phase 5
+  adds a `time` builtin driven by this counter, or phase 6 gains a row
+  for it beside SPI.
+- A container command and a collection are one opcode for interrupt
+  purposes, so IRQ latency includes a list grow. Combined with a one-byte
+  RX register, the overrun rule above is what makes that testable.
+
+`0xE000_0000` is the Cortex-M system control space. This map uses a
+Cortex-M-shaped split and parks sim control there. The window stays
+sim-only, and it is not a system-control block on a bus that also has a
+Cortex-M.
+
+Halt reasons are an enum in the sim-control page: normal return, uncaught
+exception, unsupported opcode, flash store, unaligned access, stack
+overflow, step limit. Phase 5's tests read them.
+
+### 8. Phase 6 compiler
+
+The upstream compiler is `py/compile.c` and `py/parse.c`. It is C. This
+core executes bytecode, and a second core that runs the C VM is a
+non-goal, so there is no MicroPython compiler to freeze into flash. A
+phase 6 on-device compiler is a Python program that emits the pinned
+bytecode (upstream does not ship one), or the item leaves the product.
+The CPython compiler being the wrong source is already stated and is not
+sufficient. A REPL also needs line input and `sys.stdin`, which v1 does
+not have.
+
+Float, when a program needs it, is IEEE binary32
+(`MICROPY_FLOAT_IMPL_FLOAT`). That phase rebuilds the oracle with the same
+implementation. The unix default is double, and float text will not match
+across that gap. The CPython binary64 unit stays on the other hart.
+
+### 9. Tests and CI in this repository
+
+This repository has no `make test-hw` and no hardware job. Those gates
+stay on pycore. Phase 0's exit line that the CPython hart's `make` is
+untouched is a constraint on that repository. This repository's phase 0
+exit is the `mpycore.json` unit test, the static-qstr snapshot, and a
+`mpy-cross` built from the submodule.
+
+The test contract for this tree:
+
+- Each phase has an allow-list of upstream `tests/basics` programs (later
+  `tests/micropython` as well), run on the configured oracle and on the
+  simulator. The named exit programs stay. They are not the coverage.
+- A program outside the opcode allow-list fails at image build, with the
+  opcode name in the error.
+- Integer programs cover the overflow bounds, unary minus of the minimum
+  small int, floor-division signs, `//` and `%` by `-1` and by `0`,
+  shifts, `True + 1`, and `is None`.
+- Phase 3 keeps the dropped-reference allocation test from the risks
+  section and adds a deep live chain for the mark stack.
+- A planning-only PR builds nothing. The first PR that adds RTL runs that
+  phase's exit test and its allow-list. The job builds `mpy-cross` and the
+  configured unix port from `vendor/micropython`.
+- `tools/mpy-tool.py` from that submodule is the decoder oracle
+  ([finding 2](#2-the-mpy-image-is-larger-than-phase-1-says)).
+
+### 10. Non-goals to add
+
+Added to [Non-goals](#non-goals): filesystem and `open`, threads, `input`
+and the REPL, `sys.stdin`, native / viper / inline asm, finalisers,
+weakrefs, and `id()`. SPI, I2C, and ADC were already phase 6.
+
+### 11. Doc pages
+
+Added to the [doc contract](#doc-contract): `object_model.md` and
+`calling.md` and `builtins.md` with phase 2, `exceptions.md` with phase 4.
+`image.md` also records the const-kind reject list and the static qstr
+snapshot.
+
+### 12. Audit notes that did not change a disposition
+
+- pycore `371dc007` is the merge of PR #155 on 2026-10-11. The plan's
+  "2026-10-13" date is the audit, and the commit id is right.
+- `pycore/docs/container_accel.md` at that commit matches the disposition:
+  data ready and container ready are the same cycle, and the hart stays
+  frozen for the command. The new FSM still follows that rule on 32-bit
+  object words. Porting `pycore_ca.sv` would bring the 132-bit entries.
+- The prelude sentence in the original "MicroPython, as the target
+  runtime" section described an older fixed-field prelude. It is corrected
+  above to the `py/bc.h` interleave. The peripheral lock said "these four"
+  over a six-register table; the lock is the six registers.
