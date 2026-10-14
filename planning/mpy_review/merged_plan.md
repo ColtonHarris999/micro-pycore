@@ -230,7 +230,7 @@ strings are QSTRs. SHORT_STR is the non-interned string of at most 15
 bytes. A longer string is STR.
 
 The collector reads nibble `i` before it follows the word at
-`data_base + 4*i`. CONTROL, INT, INT64, FLOAT, COMPLEX, BOOL, QSTR,
+`data_base + 4*i`. CONTROL, INT, INT64, FLOAT, COMPLEX, QSTR,
 SHORT_STR, and CONT are not pointers. `False` and `True` are CONTROL
 kinds, so they are not pointers either. A `MUT_COLLEC` address clears the
 low 2 bits first. Flash bytecode and UTF-8 have no
