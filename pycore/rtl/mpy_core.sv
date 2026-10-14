@@ -202,6 +202,8 @@ module mpy_core
         S_BF,
         S_BF_DEF,
         S_BF_DEF2,
+        S_BF_KW,
+        S_BF_KW2,
         S_BF_VA,
         S_BF_VA2,
         S_BIN,
@@ -1013,7 +1015,7 @@ module mpy_core
                 v0 = noframe ? ABI_FRAME_BASE : ftop;
                 v1 = v0 + ((32'd16 + c_nst + 32'd3 * c_nexc) << 2);
                 v2 = ab_pe - ab_lo;
-                c_fast <= (ab_nkw == 8'd0) && (c_nkwo == 8'd0) && !(c_scope & ABI_SCOPE_VARKEYWORDS) &&
+                c_fast <= (ab_nkw == 8'd0) && (c_nkwo == 8'd0) &&
                           (v2 + c_ndef >= c_npos) &&
                           ((v2 <= c_npos) || (c_scope & ABI_SCOPE_VARARGS));
                 x3 <= v0;
@@ -1062,8 +1064,19 @@ module mpy_core
                     tb_from <= ab_lo + c_npos;
                     tb_n <= (ab_pe - ab_lo > c_npos) ? (ab_pe - ab_lo - c_npos) : 8'd0;
                     gosub(S_TUP, S_BF_VA2);
-                end else begin c_ci <= 32'd0; st <= S_CELLS; end
-            S_BF_VA2: begin rf[`LI(c_npos + c_nkwo)] <= tb_v; c_ci <= 32'd0; st <= S_CELLS; end
+                end else st <= S_BF_KW;
+            S_BF_VA2: begin rf[`LI(c_npos + c_nkwo)] <= tb_v; st <= S_BF_KW; end
+            // **kwargs of a call without keywords: a fresh empty dict
+            S_BF_KW: begin
+                c_ci <= 32'd0;
+                if (c_scope & ABI_SCOPE_VARKEYWORDS) alloc(32'd4, S_BF_KW2);
+                else st <= S_CELLS;
+            end
+            S_BF_KW2: begin
+                wb_v[0] <= vint(32'd0); wb_v[1] <= vint(32'd0); wb_v[2] <= VNULL; wb_v[3] <= vint(32'd0);
+                rf[`LI(c_npos + c_nkwo + ((c_scope & ABI_SCOPE_VARARGS) ? 8'd1 : 8'd0))] <= vmut(al_a, ABI_MUT_DICT);
+                wblock(al_a, 4'd4, S_CELLS);
+            end
             S_CELLS: if (c_ci == c_ncell) begin
                     fflags <= fflags & ~FF_NOTB; st <= S_FETCH;
                 end else rd(c_cells + 4 * c_ci, S_CELL_I);
