@@ -280,7 +280,7 @@ def emit_dict(img: Image, items: list[tuple[tuple[int, int], tuple[int, int]]], 
     hdr = img.emit_words([
         (T["INT"], used),
         (T["INT"], alloc),
-        mut(taddr, "LIST") if alloc else NULL,
+        (T["CONT"], taddr) if alloc else NULL,
         (T["INT"], abi.DICT_FLAG_ROM if rom else 0),
     ])
     return mut(hdr, "DICT")
@@ -294,7 +294,8 @@ def emit_str(img: Image, text: str | bytes, tag: str = "STR") -> tuple[int, int]
     addr = img.alloc(abi.STR_HDR_WORDS)
     baddr = img.emit_bytes(data)
     img.set(addr, (T["INT"], len(data)))
-    img.set(addr + 4, (T["INT"], abi.qstr_hash(data)))
+    ascii_flag = 0 if all(b < 0x80 for b in data) else abi.STR_NONASCII
+    img.set(addr + 4, (T["INT"], abi.qstr_hash(data) | ascii_flag))
     img.set(addr + 8, (T["CONT"], baddr))
     img.rom_cache[key] = (T[tag], addr)
     return img.rom_cache[key]
@@ -308,7 +309,7 @@ def emit_tuple(img: Image, items: list[tuple[int, int]]) -> tuple[int, int]:
 
 
 def emit_box(img: Image, tag: str, lo: int, hi: int) -> tuple[int, int]:
-    addr = img.emit_words([(T["CONT"], lo), (T["CONT"], hi)])
+    addr = img.emit_words([lo, hi])
     return (T[tag], addr)
 
 
@@ -710,7 +711,7 @@ def link(main: Path, modules: list[tuple[str, Path, bool]], fw: Path, out: Path,
             raise LinkError("qstr longer than 64 KB")
         baddr = img.emit_bytes(data)
         descs.append(abi.qstr_hash(data) | (len(data) << 16))
-        descs.append(baddr)
+        descs.append(baddr | (0 if all(b < 0x80 for b in data) else abi.QDESC_NONASCII))
     desc_addr = img.emit_words(descs)
 
     hdr = abi.HDR

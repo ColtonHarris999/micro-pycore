@@ -148,7 +148,15 @@ TF = {
     "TRUTH": 0x10,    # __bool__ or __len__ in the mro
     "NATIVE_SUB": 0x20,  # user subclass of a native type other than object/exceptions
     "SETATTR": 0x40,  # __setattr__ or __delattr__ in the mro
+    "DESC": 0x80,     # a property or other data descriptor in the mro
+    "GETATTR": 0x100, # __getattr__ in the mro (attribute misses go to the firmware)
 }
+
+# STR/BYTES word 1 is the 16-bit hash; bit 30 marks data that is not all
+# ASCII, so the core leaves len() and indexing to the firmware. A qstr
+# descriptor carries the same flag in bit 31 of its address word.
+STR_NONASCII = 1 << 30
+QDESC_NONASCII = 1 << 31
 
 # Four-slot for-loop buffer (GET_ITER_STACK) and heap ITER objects share one
 # layout: [0] iterable or current value, [1] index or stop, [2] step or
@@ -238,13 +246,35 @@ PUBLIC_TYPES = [
 NATIVES = [
     # public builtins with an RTL fast path
     "len", "isinstance", "id",
-    # firmware primitives
-    "_wr", "_we", "_halt", "_tag", "_pay", "_mk", "_ld", "_st", "_peek8",
-    "_peek32", "_poke8", "_alloc", "_typeof", "_sysget", "_sysset",
-    "_callns", "_wcopy", "_bcopy", "_strfin", "_hashq", "_lookup",
-    "_ticks", "_gc", "_gcinfo", "_intern", "_strnew", "_itos", "_bfind",
-    "_ftoi", "_itof", "_alu", "_bcmp", "_tbadd", "_curexc", "_fmul10",
-    "_super",
+    # firmware primitives (pycore_firmware/mpy/fw/README.md lists signatures)
+    "_wr",       # _wr(s): bytes of a str/bytes/qstr, or one byte (int), to stdout
+    "_we",       # _we(s): the same to stderr
+    "_halt",     # _halt(code)
+    "_tag",      # _tag(x) -> int tag nibble
+    "_pay",      # _pay(x) -> unsigned 32-bit payload
+    "_mk",       # _mk(tag, payload) -> value
+    "_ld",       # _ld(p, i) -> tagged word i of object/address p
+    "_st",       # _st(p, i, v)
+    "_peek8",    # _peek8(p, off) -> byte
+    "_poke8",    # _poke8(p, off, b)
+    "_peek32",   # _peek32(addr) -> unsigned raw word
+    "_alloc",    # _alloc(nwords, tag, low) -> zeroed block tagged {tag, addr | low}
+    "_typeof",   # _typeof(x) -> type object
+    "_callns",   # _callns(code, ns): run a function or module descriptor (INT) with locals ns
+    "_wcopy",    # _wcopy(dst, doff, src, soff, n): tagged words
+    "_bcopy",    # _bcopy(dst, doff, src, soff, n): bytes (offsets from the data start)
+    "_strnew",   # _strnew(nbytes, tag) -> STR/BYTES with zeroed data, hash unset
+    "_strfin",   # _strfin(s) -> s with hash and ASCII flag computed
+    "_lookup",   # _lookup(d, key) -> value or NULL (simple keys; complex keys -> STOP)
+    "_ticks",    # _ticks() -> cycle counter (31 bits)
+    "_gc",       # _gc(): collect now
+    "_gcinfo",   # _gcinfo(which) -> 0 free blocks, 1 total blocks, 2 collections
+    "_ftoi",     # _ftoi(f) -> int (truncate); STOP for nan/inf
+    "_inext",    # _inext(it) -> next item of an RTL-steppable iterator or STOP
+    "_bcmp",     # _bcmp(a, b) -> <0, 0, >0 (str/bytes/qstr byte compare)
+    "_hash",     # _hash(x) -> hash of a simple key, or STOP
+    "_data",     # _data(s) -> INT address of the bytes of a str/bytes/qstr
+    "_slen",     # _slen(s) -> byte length of a str/bytes/qstr
     # type methods
     "list.append", "object.__init__", "BaseException.__init__",
     # constructors
@@ -387,9 +417,8 @@ UNOP = {
 SRAM_BASE = 0x2000_0000
 SRAM_BYTES = 0x0004_0000
 FRAME_BASE = SRAM_BASE
-FRAME_STRIDE = 512
-FRAME_DEPTH = 32
-SCHED_BASE = SRAM_BASE + 0x4000
+FRAME_BYTES = 0x8000      # frame stack; a call that would cross the end raises RuntimeError
+SCHED_BASE = SRAM_BASE + FRAME_BYTES
 HANDLER_BASE = SCHED_BASE + 0x40
 SYSROOT_BASE = HANDLER_BASE + 0x40
 SYSROOT_WORDS = 32
@@ -414,26 +443,28 @@ SR = {
 }
 EMERG_WORDS = 5
 
-# Frame record word offsets (512-byte stride, pycore/docs/mpy_core.md).
-# Words 0..63 are the spilled register file; 64..75 belong to mpy_mem.
+# Frame records sit back to back from FRAME_BASE (pycore/docs/mpy_core.md):
+# a 16-word header, n_state state words, then 3 words per exception block.
+# Raw header words carry tag 0, so the collector skips them.
 FR = {
-    "RC": 76,        # raw: raw-code descriptor
-    "PC": 77,        # raw: resume address
-    "OP_PC": 78,     # raw: address of the opcode being executed
-    "STATE": 79,     # raw: sp | exc_sp << 8 | n_state << 16 | flags << 24
-    "RK": 80,        # raw: how this frame's return value is delivered
-    "CONT": 81,      # raw: continuation id when RK of the callee is CONT
-    "GLOBALS": 82,   # tagged
-    "LOCALS": 83,    # tagged (dict for module and class bodies, else NULL)
-    "FUN": 84,       # tagged: the function object being run
-    "AUX": 85,       # tagged: continuation data
-    "AUX2": 86,      # tagged
-    "AUX3": 87,      # tagged
-    "QBASE": 88,     # raw: module qstr table
-    "CBASE": 89,     # raw: module const table
-    "EXC": 90,       # 3 words per entry: handler, val_sp | finally << 31, prev_exc
+    "PREV": 0,       # raw: base of the caller's record
+    "RC": 1,         # raw: raw-code descriptor
+    "PC": 2,         # raw: resume address
+    "OP_PC": 3,      # raw: address of the opcode being executed
+    "STATE": 4,      # raw: sp | exc_sp << 8 | n_state << 16 | flags << 24
+    "KIND": 5,       # raw: rk | cont << 8 | n_exc << 16
+    "GLOBALS": 6,    # tagged
+    "LOCALS": 7,     # tagged (dict for module and class bodies, else NULL)
+    "FUN": 8,        # tagged: the function object being run
+    "AUX": 9,        # tagged: continuation data
+    "AUX2": 10,      # tagged
+    "AUX3": 11,      # tagged
+    "QBASE": 12,     # raw: module qstr table
+    "CBASE": 13,     # raw: module const table
 }
-FRAME_EXC_ENTRIES = (128 - FR["EXC"]) // 3
+FRAME_HDR_WORDS = 16
+FRAME_EXC_WORDS = 3       # handler, val_sp | finally << 31, prev_exc (tagged)
+FRAME_EXC_ENTRIES = 16
 
 # Return kinds: what happens to the value a frame returns.
 RK = ["PUSH", "DISCARD", "CONT", "HALT", "PUSH_NULL"]
@@ -442,18 +473,25 @@ RK_ID = {name: i for i, name in enumerate(RK)}
 # Continuations a caller frame waits in (FR CONT).
 CONT = [
     "REDISPATCH",    # push the value, re-run the opcode at op_pc
-    "REPLACE",       # write the value to stack slot AUX, re-run the opcode
+    "REPLACE",       # write the value to stack slot AUX, re-run the opcode (AUX2: override)
     "INIT",          # __init__ returned: must be None, push AUX (the instance)
-    "WITH_ENTER",    # __enter__ returned: push the finally block, push the value
+    "WITH_ENTER",    # __enter__ returned: push the finally block (AUX: handler), push the value
     "WITH_NONE",     # __exit__ returned on the normal path: push None
     "WITH_UNWIND",   # __exit__ returned on an unwind: push AUX, AUX2
-    "WITH_EXC",      # __exit__ returned on an exception: swallow or re-raise
+    "WITH_EXC",      # __exit__ returned on an exception (AUX): swallow or re-raise
     "UNPACK",        # _unpack returned a tuple: push its items in reverse
     "RAISE",         # the value is an exception to raise
-    "CALLNS",        # _callns body returned: push the value
-    "WITH_TRUTH",    # _truth of an __exit__ result: swallow or re-raise
+    "TRUTH",         # _truth returned a bool for the opcode at op_pc; re-run it
+    "WITH_TRUTH",    # _truth of an __exit__ result: swallow or re-raise AUX
     "POP2_PUSH",     # drop two stack items, push the value
+    "FOR_NEXT",      # __next__ returned: STOP ends the loop (AUX: exit pc), else push
+    "GETITER",       # __iter__/_getiter returned: an iterator for slot AUX, re-run
+    "INIT_ARGS",     # __init__ of an exception subclass returned: must be None, push AUX
 ]
+
+# One-shot overrides the REPLACE/GETITER/TRUTH continuations hand to the
+# re-run opcode.
+OVR = {"NONE": 0, "PYOBJ": 1, "TRUE": 2, "FALSE": 3}
 CONT_ID = {name: i for i, name in enumerate(CONT)}
 
 # Sim-control page words (0xE000_0000).
@@ -484,6 +522,10 @@ def _sv_lines() -> list[str]:
             out.append(f"localparam logic [{width - 1}:0] {prefix}{name} = {width}'d{value};")
         out.append("")
 
+    block("ABI_TAG_", TAG, 4)
+    block("ABI_CTL_", CTL)
+    block("ABI_MUT_", MUT, 2)
+    block("ABI_OVR_", OVR, 2)
     block("ABI_HDR_", HDR)
     block("ABI_RC_", RC)
     block("ABI_MD_", MD)
@@ -509,8 +551,9 @@ def _sv_lines() -> list[str]:
         "FRAME_EXC_ENTRIES": FRAME_EXC_ENTRIES, "FIRST_EXC_TYPE": FIRST_EXC_TYPE,
         "SYSROOT_WORDS": SYSROOT_WORDS, "ARGBUF_WORDS": ARGBUF_WORDS,
         "ARGBUF_ARGS": ARGBUF_ARGS, "GC_POOL_BYTES": GC_POOL_BYTES,
-        "GC_BLOCK_BYTES": GC_BLOCK_BYTES, "FRAME_STRIDE": FRAME_STRIDE,
-        "FRAME_DEPTH": FRAME_DEPTH, "EMERG_WORDS": EMERG_WORDS,
+        "GC_BLOCK_BYTES": GC_BLOCK_BYTES, "FRAME_BYTES": FRAME_BYTES,
+        "FRAME_HDR_WORDS": FRAME_HDR_WORDS, "FRAME_EXC_WORDS": FRAME_EXC_WORDS,
+        "EMERG_WORDS": EMERG_WORDS, "HEADER_WORDS": HEADER_WORDS,
         "SCOPE_GENERATOR": SCOPE_GENERATOR, "SCOPE_VARKEYWORDS": SCOPE_VARKEYWORDS,
         "SCOPE_VARARGS": SCOPE_VARARGS, "SCOPE_DEFKWARGS": SCOPE_DEFKWARGS,
         "RC_FLAG_FIRMWARE": RC_FLAG_FIRMWARE, "RC_FLAG_GENERATOR": RC_FLAG_GENERATOR,
@@ -526,7 +569,8 @@ def _sv_lines() -> list[str]:
         "GC_POOL_BASE": GC_POOL_BASE, "FRAME_BASE": FRAME_BASE,
         "SCHED_BASE": SCHED_BASE, "HANDLER_BASE": HANDLER_BASE,
         "SIM_BASE": SIM_BASE, "SRAM_BASE": SRAM_BASE,
-        "SRAM_END": SRAM_BASE + SRAM_BYTES,
+        "SRAM_END": SRAM_BASE + SRAM_BYTES, "FRAME_END": FRAME_BASE + FRAME_BYTES,
+        "STR_NONASCII": STR_NONASCII, "QDESC_NONASCII": QDESC_NONASCII,
     }
     for name, value in addrs.items():
         out.append(f"localparam logic [31:0] ABI_{name} = 32'h{value:08X};")
@@ -562,6 +606,12 @@ def _py_lines() -> list[str]:
     block("HDR_", HDR)
     block("RC_", RC)
     block("MD_", MD)
+    block("FR_", FR)
+    block("SCOPE_", {"GENERATOR": SCOPE_GENERATOR, "VARKEYWORDS": SCOPE_VARKEYWORDS,
+                     "VARARGS": SCOPE_VARARGS, "DEFKWARGS": SCOPE_DEFKWARGS})
+    out.append(f"FRAME_HDR_WORDS = const({FRAME_HDR_WORDS})")
+    out.append(f"SYSROOT = const({SYSROOT_BASE})")
+    out.append(f"STR_NONASCII = const({STR_NONASCII})")
     out.append(f"FIRST_EXC_TYPE = const({FIRST_EXC_TYPE})")
     out.append(f"N_TYPES = const({len(TYPES)})")
     out.append(f"TYPE_TABLE = const({TYPE_TABLE_BASE})")
