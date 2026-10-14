@@ -119,6 +119,7 @@ EXCORE_RTL_SRCS := \
 	pycore-python-tests pycore-size-report pycore-compile-suite pycore-mem \
 	pycore-cache-lru pycore-cache pycore-ram pycore-l1d-handoff pycore-fetch \
 	pycore-frame pycore-frame-fib pycore-regfile mpy-value pycore-codc pycore-gic \
+	pycore-mpy-periph \
 	pycore-img-container-call-spike \
 	pycore-list-append-fixtures pycore-for-iter-fixtures \
 	pycore-list-extend-fixtures pycore-excore-integration-fixtures \
@@ -477,6 +478,22 @@ pycore-gic:
 		pycore/tb/tb_gic.sv
 	./$(BUILD_DIR)/pycore_gic/Vtb_gic
 
+# Phase-5 UART/GPIO/timer/IRQ. Edge counts come from the host register model.
+pycore-mpy-periph:
+	mkdir -p $(BUILD_DIR)
+	$(PYTHON3) pycore/tools/mpy_periph_model.py --self-check
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_mpy_periph \
+		--Mdir $(BUILD_DIR)/mpy_periph \
+		-Wall -Wno-fatal \
+		pycore/rtl/mpy_mmio_pkg.sv \
+		pycore/rtl/mpy_irq.sv \
+		pycore/rtl/mpy_periph.sv \
+		pycore/tb/tb_mpy_periph.sv
+	./$(BUILD_DIR)/mpy_periph/Vtb_mpy_periph \
+		$$($(PYTHON3) pycore/tools/mpy_periph_model.py --plusargs)
+
 pycore-l1d-handoff:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
@@ -829,7 +846,8 @@ excore-test: excore-asm-tests excore-cpu-test
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-alu-units pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff pycore-mem-nb \
-	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile mpy-value pycore-mpy-gc
+	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile mpy-value pycore-mpy-gc \
+	pycore-mpy-periph
 
 # MicroPython-encoding collector (pycore/docs/mpy_gc.md). Separate from
 # pycore-gc, which still builds the imported 128-bit engine.
