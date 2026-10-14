@@ -140,7 +140,7 @@ Containers and strings:
 | DICT | used count | allocated slots | pointer to the table | each table slot is a key word then a value word |
 | SET | used count | allocated slots | pointer to the table | one word per slot |
 | STR | number of bytes | hash | pointer to the bytes | — |
-| BYTES | length | pointer to the buffer | capacity, `0` when immutable | bit 0 of a flags nibble on word 0 is set for `bytearray` |
+| BYTES | `0` for `bytes`, `1` for `bytearray` | length | pointer to the buffer | word 3 is capacity, `0` when immutable |
 
 `OBJECT` kinds, in the first word. Word 1 is the type pointer, or 0 when
 there is none. Fields start at word 2.
