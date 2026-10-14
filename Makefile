@@ -127,7 +127,7 @@ EXCORE_RTL_SRCS := \
 	docker-lint-file docker-run-file docker-exec-file docker-shell \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
-	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
+	pycore-gc pycore-mpy-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
 	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
 	research-compare research-compare-machines
 
@@ -796,7 +796,19 @@ excore-test: excore-asm-tests excore-cpu-test
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-alu-units pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff pycore-mem-nb \
-	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile
+	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile pycore-mpy-gc
+
+# MicroPython-encoding collector (pycore/docs/mpy_gc.md). Separate from
+# pycore-gc, which still builds the imported 128-bit engine.
+pycore-mpy-gc:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_mpy_gc \
+		--Mdir $(BUILD_DIR)/tb_mpy_gc \
+		-Wall -Wno-fatal \
+		pycore/rtl/mpy_gc.sv pycore/tb/tb_mpy_gc.sv
+	./$(BUILD_DIR)/tb_mpy_gc/Vtb_mpy_gc
 
 DOCKER_MAKE = docker run --rm $(DOCKER_RUN_FLAGS) \
 	-v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" \
