@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: python-cpu-sim:latest
-    working_dir: /workspace
+    image: upycore-sim:latest
+    working_dir: /work
     volumes:
-      - .:/workspace
-    command: make all-tests
+      - .:/work
+    command: make test

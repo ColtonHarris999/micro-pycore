@@ -1,0 +1,40 @@
+--- a/ports/unix/mpconfigport.h	2026-10-14 10:50:07.189247004 +0000
++++ b/ports/unix/mpconfigport.h	2026-10-14 10:56:30.135056422 +0000
+@@ -115,11 +115,20 @@
+ #endif
+ 
+ // Enable the VFS, and enable the posix "filesystem".
++// A variant may turn finalisers off. Posix VFS needs a finaliser, so that
++// variant defines MICROPY_VFS_POSIX and MICROPY_READER_VFS as 0 first.
++// MICROPY_READER_POSIX stays on, so a script file still runs.
++#ifndef MICROPY_ENABLE_FINALISER
+ #define MICROPY_ENABLE_FINALISER    (1)
++#endif
+ #define MICROPY_VFS                 (1)
++#ifndef MICROPY_READER_VFS
+ #define MICROPY_READER_VFS          (1)
++#endif
+ #define MICROPY_HELPER_LEXER_UNIX   (1)
++#ifndef MICROPY_VFS_POSIX
+ #define MICROPY_VFS_POSIX           (1)
++#endif
+ #define MICROPY_READER_POSIX        (1)
+ #if MICROPY_PY_FFI || MICROPY_BLUETOOTH_BTSTACK
+ #define MICROPY_TRACKED_ALLOC       (1)
+--- a/py/modsys.c	2026-10-14 10:50:07.193247216 +0000
++++ b/py/modsys.c	2026-10-14 10:50:07.221248694 +0000
+@@ -79,8 +79,13 @@
+     }
+ };
+ static const MP_DEFINE_STR_OBJ(mp_sys_implementation_machine_obj, MICROPY_BANNER_MACHINE);
++// A variant renames sys.implementation.name by defining this as an MP_QSTR_*
++// token. Qstr generation sees the expanded token. Upstream stays micropython.
++#ifndef MICROPY_PY_SYS_IMPLEMENTATION_NAME
++#define MICROPY_PY_SYS_IMPLEMENTATION_NAME MP_QSTR_micropython
++#endif
+ #define SYS_IMPLEMENTATION_ELEMS_BASE \
+-    MP_ROM_QSTR(MP_QSTR_micropython), \
++    MP_ROM_QSTR(MICROPY_PY_SYS_IMPLEMENTATION_NAME), \
+     MP_ROM_PTR(&mp_sys_implementation_version_info_obj), \
+     MP_ROM_PTR(&mp_sys_implementation_machine_obj)
+ 

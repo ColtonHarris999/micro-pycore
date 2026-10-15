@@ -2,15 +2,8 @@ FROM python:3.14-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System toolchain for the PyCore two-core simulator:
-#   - verilator: SystemVerilog simulator. Debian trixie ships 5.032, which the
-#     RTL requires (it slices function-call return values, unsupported by the
-#     older 5.020 in Ubuntu's repos).
-#   - build-essential / make: C++ toolchain Verilator emits and drives.
-#   - git / curl / ca-certificates: repository and network basics.
-#   - valgrind: Callgrind cache and branch simulation for the CPython baseline.
-# The python:3.14-slim base provides both `python3.14` (image-boot tooling) and
-# `python3` (excore RV32 assembler tooling).
+# Verilator 5.032 (Debian trixie) builds the uPyCore hart. Ubuntu's 5.020
+# rejects slices of function-call return values used in the RTL.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential \
@@ -19,5 +12,4 @@ RUN apt-get update \
         git \
         curl \
         ca-certificates \
-        valgrind \
  && rm -rf /var/lib/apt/lists/*

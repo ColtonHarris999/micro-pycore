@@ -1,5 +1,5 @@
 {
-  "name": "PyCore two-core simulator",
+  "name": "uPyCore simulator",
   "build": {
     "dockerfile": "Dockerfile"
   },

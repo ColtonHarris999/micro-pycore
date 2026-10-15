@@ -1,0 +1,2358 @@
+{
+  "name": "upycore",
+  "pin": {
+    "version": "1.29.0",
+    "commit": "0fd6c573ea815774668bbb16b8e197c8822368b2"
+  },
+  "mpy": {
+    "version": 6,
+    "sub_version": 3,
+    "bytecode_only_feature_byte": 0,
+    "small_int_bits": 31,
+    "sample_header": "4d06001f",
+    "qstr_last_static": 165,
+    "qstr_last_static_name": "zip",
+    "feature": {
+      "sub_version_mask": 3,
+      "arch_shift": 2,
+      "arch_mask": 47,
+      "flags_bit": 64
+    }
+  },
+  "runtime": {
+    "int_bits": 64,
+    "register_file_entries": 64,
+    "flash_base": 0,
+    "reserved_prefix": 8,
+    "pointer_forbidden": [
+      0,
+      4
+    ],
+    "qstr_bytes_in_hash": 2,
+    "qstr_bytes_in_len": 1
+  },
+  "architectures": [
+    "NONE",
+    "X86",
+    "X64",
+    "ARMV6",
+    "ARMV6M",
+    "ARMV7M",
+    "ARMV7EM",
+    "ARMV7EMSP",
+    "ARMV7EMDP",
+    "XTENSA",
+    "XTENSAWIN",
+    "RV32IMC",
+    "RV64IMC"
+  ],
+  "raw_code_kinds": {
+    "bytecode": 2,
+    "native": 3,
+    "viper": 4,
+    "asm": 5
+  },
+  "const_kinds": {
+    "fun_table": {
+      "id": 0,
+      "phase": "reject",
+      "reason": "native"
+    },
+    "none": {
+      "id": 1,
+      "phase": 1
+    },
+    "false": {
+      "id": 2,
+      "phase": 1
+    },
+    "true": {
+      "id": 3,
+      "phase": 1
+    },
+    "ellipsis": {
+      "id": 4,
+      "phase": 1
+    },
+    "str": {
+      "id": 5,
+      "phase": 1
+    },
+    "bytes": {
+      "id": 6,
+      "phase": 1
+    },
+    "int": {
+      "id": 7,
+      "phase": 1,
+      "reject_outside": "signed-64"
+    },
+    "float": {
+      "id": 8,
+      "phase": "reject",
+      "until": 4
+    },
+    "complex": {
+      "id": 9,
+      "phase": "reject",
+      "until": 4
+    },
+    "tuple": {
+      "id": 10,
+      "phase": 1
+    }
+  },
+  "immediates": {
+    "none": 0,
+    "false": 1,
+    "true": 3
+  },
+  "control_kinds": {
+    "empty": 0,
+    "none": 1,
+    "null": 2,
+    "tombstone": 3,
+    "false": 4,
+    "true": 5
+  },
+  "tags": [
+    {
+      "tag": 0,
+      "name": "CONTROL",
+      "registers": 1
+    },
+    {
+      "tag": 1,
+      "name": "INT",
+      "registers": 1
+    },
+    {
+      "tag": 2,
+      "name": "INT64",
+      "registers": 2
+    },
+    {
+      "tag": 3,
+      "name": "FLOAT",
+      "registers": 1
+    },
+    {
+      "tag": 4,
+      "name": "COMPLEX",
+      "registers": 2
+    },
+    {
+      "tag": 5,
+      "name": "reserved",
+      "registers": 0
+    },
+    {
+      "tag": 6,
+      "name": "QSTR",
+      "registers": 1
+    },
+    {
+      "tag": 7,
+      "name": "SHORT_STR",
+      "registers": 4
+    },
+    {
+      "tag": 8,
+      "name": "STR",
+      "registers": 1
+    },
+    {
+      "tag": 9,
+      "name": "TUPLE",
+      "registers": 1
+    },
+    {
+      "tag": 10,
+      "name": "MUT_COLLEC",
+      "registers": 1
+    },
+    {
+      "tag": 11,
+      "name": "RANGE",
+      "registers": 1
+    },
+    {
+      "tag": 12,
+      "name": "ITER",
+      "registers": 1
+    },
+    {
+      "tag": 13,
+      "name": "BYTES",
+      "registers": 1
+    },
+    {
+      "tag": 14,
+      "name": "OBJECT",
+      "registers": 1
+    },
+    {
+      "tag": 15,
+      "name": "CONT",
+      "registers": 1
+    }
+  ],
+  "object_kinds": {
+    "instance": 1,
+    "type": 2,
+    "bound_method": 3,
+    "builtin": 4,
+    "exception": 6,
+    "cell": 7,
+    "function": 8,
+    "module": 11,
+    "ellipsis": 12
+  },
+  "prelude": {
+    "encoding": "bit-interleaved",
+    "signature_fields": [
+      "n_state",
+      "n_exc_stack",
+      "scope_flags",
+      "n_pos_args",
+      "n_kwonly_args",
+      "n_def_pos_args"
+    ],
+    "size_fields": [
+      "n_info",
+      "n_cell"
+    ],
+    "source_info": [
+      "simple_name",
+      "arg_names",
+      "line_info"
+    ],
+    "after_source_info": [
+      "closure_cells",
+      "opcodes"
+    ],
+    "scope_flags": {
+      "generator": 1,
+      "varkeywords": 2,
+      "varargs": 4,
+      "defkwargs": 8
+    }
+  },
+  "bytecode": {
+    "format_magic": 932,
+    "extra_byte_mask": 158,
+    "signed_offset_opcodes": [
+      64,
+      66,
+      67,
+      68
+    ],
+    "windows": {
+      "small_int": {
+        "base": 112,
+        "count": 64,
+        "excess": 16
+      },
+      "load_fast": {
+        "base": 176,
+        "count": 16
+      },
+      "store_fast": {
+        "base": 192,
+        "count": 16
+      },
+      "unary": {
+        "base": 208,
+        "count": 4,
+        "names": [
+          "__pos__",
+          "__neg__",
+          "__invert__",
+          "<not>"
+        ]
+      },
+      "binary": {
+        "base": 215,
+        "count": 35,
+        "names": [
+          "__lt__",
+          "__gt__",
+          "__eq__",
+          "__le__",
+          "__ge__",
+          "__ne__",
+          "<in>",
+          "<is>",
+          "<exception match>",
+          "__ior__",
+          "__ixor__",
+          "__iand__",
+          "__ilshift__",
+          "__irshift__",
+          "__iadd__",
+          "__isub__",
+          "__imul__",
+          "__imatmul__",
+          "__ifloordiv__",
+          "__itruediv__",
+          "__imod__",
+          "__ipow__",
+          "__or__",
+          "__xor__",
+          "__and__",
+          "__lshift__",
+          "__rshift__",
+          "__add__",
+          "__sub__",
+          "__mul__",
+          "__matmul__",
+          "__floordiv__",
+          "__truediv__",
+          "__mod__",
+          "__pow__"
+        ]
+      }
+    },
+    "opcodes": [
+      {
+        "name": "LOAD_CONST_FALSE",
+        "opcode": 80,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_NONE",
+        "opcode": 81,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_TRUE",
+        "opcode": 82,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT",
+        "opcode": 34,
+        "format": "varuint",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": true,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_STRING",
+        "opcode": 16,
+        "format": "qstr",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_OBJ",
+        "opcode": 35,
+        "format": "varuint",
+        "stack_effect": "+1",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_NULL",
+        "opcode": 83,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST_N",
+        "opcode": 36,
+        "format": "varuint",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_DEREF",
+        "opcode": 37,
+        "format": "varuint",
+        "stack_effect": "+1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_NAME",
+        "opcode": 17,
+        "format": "qstr",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_GLOBAL",
+        "opcode": 18,
+        "format": "qstr",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_ATTR",
+        "opcode": 19,
+        "format": "qstr",
+        "stack_effect": "0",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_METHOD",
+        "opcode": 20,
+        "format": "qstr",
+        "stack_effect": "+1",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_SUPER_METHOD",
+        "opcode": 21,
+        "format": "qstr",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_BUILD_CLASS",
+        "opcode": 84,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_SUBSCR",
+        "opcode": 85,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST_N",
+        "opcode": 38,
+        "format": "varuint",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_DEREF",
+        "opcode": 39,
+        "format": "varuint",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_NAME",
+        "opcode": 22,
+        "format": "qstr",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_GLOBAL",
+        "opcode": 23,
+        "format": "qstr",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_ATTR",
+        "opcode": 24,
+        "format": "qstr",
+        "stack_effect": "-2",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_SUBSCR",
+        "opcode": 86,
+        "format": "byte",
+        "stack_effect": "-3",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "DELETE_FAST",
+        "opcode": 40,
+        "format": "varuint",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "DELETE_DEREF",
+        "opcode": 41,
+        "format": "varuint",
+        "stack_effect": "0",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "DELETE_NAME",
+        "opcode": 25,
+        "format": "qstr",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "DELETE_GLOBAL",
+        "opcode": 26,
+        "format": "qstr",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "DUP_TOP",
+        "opcode": 87,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "DUP_TOP_TWO",
+        "opcode": 88,
+        "format": "byte",
+        "stack_effect": "+2",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "POP_TOP",
+        "opcode": 89,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "ROT_TWO",
+        "opcode": 90,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "ROT_THREE",
+        "opcode": 91,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "UNWIND_JUMP",
+        "opcode": 64,
+        "format": "offset",
+        "stack_effect": "variable",
+        "phase": 4,
+        "signed": true,
+        "extra_byte": true
+      },
+      {
+        "name": "JUMP",
+        "opcode": 66,
+        "format": "offset",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": true,
+        "extra_byte": false
+      },
+      {
+        "name": "POP_JUMP_IF_TRUE",
+        "opcode": 67,
+        "format": "offset",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": true,
+        "extra_byte": false
+      },
+      {
+        "name": "POP_JUMP_IF_FALSE",
+        "opcode": 68,
+        "format": "offset",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": true,
+        "extra_byte": false
+      },
+      {
+        "name": "JUMP_IF_TRUE_OR_POP",
+        "opcode": 69,
+        "format": "offset",
+        "stack_effect": "0 or -1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "JUMP_IF_FALSE_OR_POP",
+        "opcode": 70,
+        "format": "offset",
+        "stack_effect": "0 or -1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "SETUP_WITH",
+        "opcode": 71,
+        "format": "offset",
+        "stack_effect": "+2",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "SETUP_EXCEPT",
+        "opcode": 72,
+        "format": "offset",
+        "stack_effect": "0",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "SETUP_FINALLY",
+        "opcode": 73,
+        "format": "offset",
+        "stack_effect": "0",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "POP_EXCEPT_JUMP",
+        "opcode": 74,
+        "format": "offset",
+        "stack_effect": "0",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "FOR_ITER",
+        "opcode": 75,
+        "format": "offset",
+        "stack_effect": "variable",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "WITH_CLEANUP",
+        "opcode": 92,
+        "format": "byte",
+        "stack_effect": "variable",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "END_FINALLY",
+        "opcode": 93,
+        "format": "byte",
+        "stack_effect": "variable",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "GET_ITER",
+        "opcode": 94,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "GET_ITER_STACK",
+        "opcode": 95,
+        "format": "byte",
+        "stack_effect": "+3",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BUILD_TUPLE",
+        "opcode": 42,
+        "format": "varuint",
+        "stack_effect": "1-n",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BUILD_LIST",
+        "opcode": 43,
+        "format": "varuint",
+        "stack_effect": "1-n",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BUILD_MAP",
+        "opcode": 44,
+        "format": "varuint",
+        "stack_effect": "+1",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_MAP",
+        "opcode": 98,
+        "format": "byte",
+        "stack_effect": "-2",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BUILD_SET",
+        "opcode": 45,
+        "format": "varuint",
+        "stack_effect": "1-n",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BUILD_SLICE",
+        "opcode": 46,
+        "format": "varuint",
+        "stack_effect": "1-n",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_COMP",
+        "opcode": 47,
+        "format": "varuint",
+        "stack_effect": "list/set -1, dict -2",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "UNPACK_SEQUENCE",
+        "opcode": 48,
+        "format": "varuint",
+        "stack_effect": "n-1",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "UNPACK_EX",
+        "opcode": 49,
+        "format": "varuint",
+        "stack_effect": "n_left+n_right",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "RETURN_VALUE",
+        "opcode": 99,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "RAISE_LAST",
+        "opcode": 100,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "RAISE_OBJ",
+        "opcode": 101,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "RAISE_FROM",
+        "opcode": 102,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "YIELD_VALUE",
+        "opcode": 103,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": "reject",
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "YIELD_FROM",
+        "opcode": 104,
+        "format": "byte",
+        "stack_effect": "variable",
+        "phase": "reject",
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "MAKE_FUNCTION",
+        "opcode": 50,
+        "format": "varuint",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "MAKE_FUNCTION_DEFARGS",
+        "opcode": 51,
+        "format": "varuint",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "MAKE_CLOSURE",
+        "opcode": 32,
+        "format": "varuint",
+        "stack_effect": "1-n_closed",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": true
+      },
+      {
+        "name": "MAKE_CLOSURE_DEFARGS",
+        "opcode": 33,
+        "format": "varuint",
+        "stack_effect": "-(1+n_closed)",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": true
+      },
+      {
+        "name": "CALL_FUNCTION",
+        "opcode": 52,
+        "format": "varuint",
+        "stack_effect": "-(n_pos+2*n_kw)",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "CALL_METHOD",
+        "opcode": 54,
+        "format": "varuint",
+        "stack_effect": "-(n_pos+2*n_kw+1)",
+        "phase": 3,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "CALL_FUNCTION_VAR_KW",
+        "opcode": 53,
+        "format": "varuint",
+        "stack_effect": "-(n_pos+2*n_kw+1)",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "CALL_METHOD_VAR_KW",
+        "opcode": 55,
+        "format": "varuint",
+        "stack_effect": "-(n_pos+2*n_kw+2)",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "IMPORT_NAME",
+        "opcode": 27,
+        "format": "qstr",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "IMPORT_FROM",
+        "opcode": 28,
+        "format": "qstr",
+        "stack_effect": "+1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "IMPORT_STAR",
+        "opcode": 105,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -16",
+        "opcode": 112,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -15",
+        "opcode": 113,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -14",
+        "opcode": 114,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -13",
+        "opcode": 115,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -12",
+        "opcode": 116,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -11",
+        "opcode": 117,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -10",
+        "opcode": 118,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -9",
+        "opcode": 119,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -8",
+        "opcode": 120,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -7",
+        "opcode": 121,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -6",
+        "opcode": 122,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -5",
+        "opcode": 123,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -4",
+        "opcode": 124,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -3",
+        "opcode": 125,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -2",
+        "opcode": 126,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT -1",
+        "opcode": 127,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 0",
+        "opcode": 128,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 1",
+        "opcode": 129,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 2",
+        "opcode": 130,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 3",
+        "opcode": 131,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 4",
+        "opcode": 132,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 5",
+        "opcode": 133,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 6",
+        "opcode": 134,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 7",
+        "opcode": 135,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 8",
+        "opcode": 136,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 9",
+        "opcode": 137,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 10",
+        "opcode": 138,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 11",
+        "opcode": 139,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 12",
+        "opcode": 140,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 13",
+        "opcode": 141,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 14",
+        "opcode": 142,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 15",
+        "opcode": 143,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 16",
+        "opcode": 144,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 17",
+        "opcode": 145,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 18",
+        "opcode": 146,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 19",
+        "opcode": 147,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 20",
+        "opcode": 148,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 21",
+        "opcode": 149,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 22",
+        "opcode": 150,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 23",
+        "opcode": 151,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 24",
+        "opcode": 152,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 25",
+        "opcode": 153,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 26",
+        "opcode": 154,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 27",
+        "opcode": 155,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 28",
+        "opcode": 156,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 29",
+        "opcode": 157,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 30",
+        "opcode": 158,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 31",
+        "opcode": 159,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 32",
+        "opcode": 160,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 33",
+        "opcode": 161,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 34",
+        "opcode": 162,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 35",
+        "opcode": 163,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 36",
+        "opcode": 164,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 37",
+        "opcode": 165,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 38",
+        "opcode": 166,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 39",
+        "opcode": 167,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 40",
+        "opcode": 168,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 41",
+        "opcode": 169,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 42",
+        "opcode": 170,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 43",
+        "opcode": 171,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 44",
+        "opcode": 172,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 45",
+        "opcode": 173,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 46",
+        "opcode": 174,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_CONST_SMALL_INT 47",
+        "opcode": 175,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 0",
+        "opcode": 176,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 0",
+        "opcode": 192,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 1",
+        "opcode": 177,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 1",
+        "opcode": 193,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 2",
+        "opcode": 178,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 2",
+        "opcode": 194,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 3",
+        "opcode": 179,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 3",
+        "opcode": 195,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 4",
+        "opcode": 180,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 4",
+        "opcode": 196,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 5",
+        "opcode": 181,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 5",
+        "opcode": 197,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 6",
+        "opcode": 182,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 6",
+        "opcode": 198,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 7",
+        "opcode": 183,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 7",
+        "opcode": 199,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 8",
+        "opcode": 184,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 8",
+        "opcode": 200,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 9",
+        "opcode": 185,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 9",
+        "opcode": 201,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 10",
+        "opcode": 186,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 10",
+        "opcode": 202,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 11",
+        "opcode": 187,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 11",
+        "opcode": 203,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 12",
+        "opcode": 188,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 12",
+        "opcode": 204,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 13",
+        "opcode": 189,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 13",
+        "opcode": 205,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 14",
+        "opcode": 190,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 14",
+        "opcode": 206,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "LOAD_FAST 15",
+        "opcode": 191,
+        "format": "byte",
+        "stack_effect": "+1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "STORE_FAST 15",
+        "opcode": 207,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "UNARY_OP 0 __pos__",
+        "opcode": 208,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "UNARY_OP 1 __neg__",
+        "opcode": 209,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "UNARY_OP 2 __invert__",
+        "opcode": 210,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "UNARY_OP 3 <not>",
+        "opcode": 211,
+        "format": "byte",
+        "stack_effect": "0",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 0 __lt__",
+        "opcode": 215,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 1 __gt__",
+        "opcode": 216,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 2 __eq__",
+        "opcode": 217,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 3 __le__",
+        "opcode": 218,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 4 __ge__",
+        "opcode": 219,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 5 __ne__",
+        "opcode": 220,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 6 <in>",
+        "opcode": 221,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 7 <is>",
+        "opcode": 222,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 8 <exception match>",
+        "opcode": 223,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 9 __ior__",
+        "opcode": 224,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 10 __ixor__",
+        "opcode": 225,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 11 __iand__",
+        "opcode": 226,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 12 __ilshift__",
+        "opcode": 227,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 13 __irshift__",
+        "opcode": 228,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 14 __iadd__",
+        "opcode": 229,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 15 __isub__",
+        "opcode": 230,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 16 __imul__",
+        "opcode": 231,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 17 __imatmul__",
+        "opcode": 232,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 18 __ifloordiv__",
+        "opcode": 233,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 19 __itruediv__",
+        "opcode": 234,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 20 __imod__",
+        "opcode": 235,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 21 __ipow__",
+        "opcode": 236,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 22 __or__",
+        "opcode": 237,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 23 __xor__",
+        "opcode": 238,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 24 __and__",
+        "opcode": 239,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 25 __lshift__",
+        "opcode": 240,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 26 __rshift__",
+        "opcode": 241,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 27 __add__",
+        "opcode": 242,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 28 __sub__",
+        "opcode": 243,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 2,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 29 __mul__",
+        "opcode": 244,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 30 __matmul__",
+        "opcode": 245,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 31 __floordiv__",
+        "opcode": 246,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 32 __truediv__",
+        "opcode": 247,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 33 __mod__",
+        "opcode": 248,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      },
+      {
+        "name": "BINARY_OP 34 __pow__",
+        "opcode": 249,
+        "format": "byte",
+        "stack_effect": "-1",
+        "phase": 4,
+        "signed": false,
+        "extra_byte": false
+      }
+    ]
+  },
+  "image": {
+    "magic": "UPMI",
+    "version": 1,
+    "header_bytes": 48,
+    "bytecode_kind": 0,
+    "qstr_desc_words": 3,
+    "module_entry_words": 8,
+    "raw_code_words": 20
+  },
+  "static_qstrs": [
+    "",
+    "__dir__",
+    "\n",
+    " ",
+    "*",
+    "/",
+    "<module>",
+    "_",
+    "__call__",
+    "__class__",
+    "__delitem__",
+    "__enter__",
+    "__exit__",
+    "__getattr__",
+    "__getitem__",
+    "__hash__",
+    "__init__",
+    "__int__",
+    "__iter__",
+    "__len__",
+    "__main__",
+    "__module__",
+    "__name__",
+    "__new__",
+    "__next__",
+    "__qualname__",
+    "__repr__",
+    "__setitem__",
+    "__str__",
+    "ArithmeticError",
+    "AssertionError",
+    "AttributeError",
+    "BaseException",
+    "EOFError",
+    "Ellipsis",
+    "Exception",
+    "GeneratorExit",
+    "ImportError",
+    "IndentationError",
+    "IndexError",
+    "KeyError",
+    "KeyboardInterrupt",
+    "LookupError",
+    "MemoryError",
+    "NameError",
+    "NoneType",
+    "NotImplementedError",
+    "OSError",
+    "OverflowError",
+    "RuntimeError",
+    "StopIteration",
+    "SyntaxError",
+    "SystemExit",
+    "TypeError",
+    "ValueError",
+    "ZeroDivisionError",
+    "abs",
+    "all",
+    "any",
+    "append",
+    "args",
+    "bool",
+    "builtins",
+    "bytearray",
+    "bytecode",
+    "bytes",
+    "callable",
+    "chr",
+    "classmethod",
+    "clear",
+    "close",
+    "const",
+    "copy",
+    "count",
+    "dict",
+    "dir",
+    "divmod",
+    "end",
+    "endswith",
+    "eval",
+    "exec",
+    "extend",
+    "find",
+    "format",
+    "from_bytes",
+    "get",
+    "getattr",
+    "globals",
+    "hasattr",
+    "hash",
+    "id",
+    "index",
+    "insert",
+    "int",
+    "isalpha",
+    "isdigit",
+    "isinstance",
+    "islower",
+    "isspace",
+    "issubclass",
+    "isupper",
+    "items",
+    "iter",
+    "join",
+    "key",
+    "keys",
+    "len",
+    "list",
+    "little",
+    "locals",
+    "lower",
+    "lstrip",
+    "main",
+    "map",
+    "micropython",
+    "next",
+    "object",
+    "open",
+    "ord",
+    "pop",
+    "popitem",
+    "pow",
+    "print",
+    "range",
+    "read",
+    "readinto",
+    "readline",
+    "remove",
+    "replace",
+    "repr",
+    "reverse",
+    "rfind",
+    "rindex",
+    "round",
+    "rsplit",
+    "rstrip",
+    "self",
+    "send",
+    "sep",
+    "set",
+    "setattr",
+    "setdefault",
+    "sort",
+    "sorted",
+    "split",
+    "start",
+    "startswith",
+    "staticmethod",
+    "step",
+    "stop",
+    "str",
+    "strip",
+    "sum",
+    "super",
+    "throw",
+    "to_bytes",
+    "tuple",
+    "type",
+    "update",
+    "upper",
+    "utf-8",
+    "value",
+    "values",
+    "write",
+    "zip"
+  ]
+}
