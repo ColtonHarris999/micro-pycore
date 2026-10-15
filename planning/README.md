@@ -5,6 +5,7 @@ under `pycore/docs/`, `excore/docs/`, and `pycore_firmware/builtins/`.
 
 | File | Role |
 | --- | --- |
+| [`upy2_compiler_plan.md`](upy2_compiler_plan.md) | How the uPy2 compiler (`mpyc`) becomes on-device `compile` / `exec` / `eval`. Runtime work stays in this repo. Compiler work stays in uPy2 |
 | [`micropython_pivot_plan.md`](micropython_pivot_plan.md) | **The plan of record for micro-pycore:** restructuring this tree from a CPython 3.14 hart into a MicroPython microcontroller core. Read it first. Product decisions D1–D7 and the week schedule live here |
 | [`mpy_review/merged_plan.md`](mpy_review/merged_plan.md) | The phase contract. It folds three reviews of the original draft into that draft's section structure, and it follows the pivot plan where the two differ. Implement phases from this file. The value encoding is a 32-bit payload plus a 4-bit tag (pivot plan §0.5). If a phase gate and a pivot week disagree, the pivot decision stands and the merged plan's week-to-phase table is the join |
 | [`mpy_review/final_review_report.md`](mpy_review/final_review_report.md) | Inventory, verdicts, and conflict resolutions for those three reviews. The plans `plan_A`, `plan_B`, `plan_C`, and `base_plan` in that directory are the inputs and stay as record |
