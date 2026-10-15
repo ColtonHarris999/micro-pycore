@@ -70,7 +70,7 @@ props = { file = "hw/objects/props.py" }
 
 [builtins]
 builtin_fns = { file = "hw/builtins/funcs.py" }
-method_getattr = { file = "hw/builtins/method_getattr.py", xfail = "getattr does not resolve list methods" }
+method_getattr = { file = "hw/builtins/method_getattr.py" }
 sysmod = { file = "hw/builtins/sysmod.py" }
 gcmod = { file = "hw/builtins/gcmod.py", cycles = 40_000_000 }
 

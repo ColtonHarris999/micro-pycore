@@ -367,7 +367,8 @@ def _load_attr(obj, name):
     spec = _special_attr(obj, name)
     if spec is not NULL:
         return spec
-    if _tag(obj) == TAG_OBJECT:
+    t = _tag(obj)
+    if t == TAG_OBJECT:
         k = _ld(obj, 0)
         if k == OB_INSTANCE or k == OB_EXCEPTION:
             d = _ld(obj, 2 if k == OB_INSTANCE else 4)
@@ -392,6 +393,12 @@ def _load_attr(obj, name):
             found = _tlookup(_ld(obj, 1), name)
             if found is not NULL:
                 return _desc_get(found, obj)
+    elif t == TAG_MUT or t == TAG_TUPLE or t == TAG_BYTES or _isstr(obj):
+        # Native containers are not objects. LOAD_ATTR takes the type
+        # (S_AT_NT) and binds a function found there.
+        found = _tlookup(_typeof(obj), name)
+        if found is not NULL:
+            return _desc_get(found, obj)
     return _getattr(obj, name)
 
 
