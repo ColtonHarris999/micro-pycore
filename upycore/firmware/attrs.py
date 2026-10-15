@@ -303,6 +303,8 @@ def _subscr(obj, index):
 
 
 def _seq_at(obj, i):
+    if _isstr(obj) and not _ascii(obj):
+        return _ustr_at(obj, i)
     n = _slen(obj) if _tag(obj) != TAG_TUPLE and not _islist(obj) else _ld(obj, 0)
     if i < 0:
         i += n

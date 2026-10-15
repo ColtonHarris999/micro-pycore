@@ -54,7 +54,7 @@ unpack = { file = "hw/containers/unpack.py" }
 
 [strings]
 text = { file = "hw/strings/text.py" }
-unicode = { file = "hw/strings/unicode.py", xfail = "len() rejects a non-ASCII str" }
+unicode = { file = "hw/strings/unicode.py" }
 bytesobj = { file = "hw/strings/bytesobj.py" }
 format = { file = "hw/strings/format.py" }
 

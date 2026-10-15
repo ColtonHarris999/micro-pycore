@@ -267,6 +267,8 @@ def _len_fb(x):
         return _range_len(x)
     if _isbarr(x):
         return _ld(x, 0)
+    if _isstr(x):
+        return _utf8_len(x)
     if t == TAG_OBJECT:
         k = _ld(x, 0)
         if k == OB_DICT_VIEW:
