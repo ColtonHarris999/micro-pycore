@@ -77,7 +77,7 @@ gcmod = { file = "hw/builtins/gcmod.py", cycles = 40_000_000 }
 [modules]
 import_missing = { file = "hw/modules/import_missing.py" }
 use_helper = { file = "hw/modules/use_helper.py", modules = ["helper=hw/modules/helper.py"], oracle = false }
-use_pkg = { file = "hw/modules/use_pkg.py", modules = ["pkg=hw/modules/pkg/__init__.py", "pkg.sub=hw/modules/pkg/sub.py"], oracle = false, xfail = "a frozen package body does not bind its globals" }
+use_pkg = { file = "hw/modules/use_pkg.py", modules = ["pkg=hw/modules/pkg/__init__.py", "pkg.sub=hw/modules/pkg/sub.py"], oracle = false }
 
 [integ]
 fib = { file = "hw/integ/fib.py" }
