@@ -441,6 +441,7 @@ module mpy_core
         S_N_BCMP2,
         S_N_BEI,
         S_N_DATA,
+        S_N_FGET,
         S_N_FTOI,
         S_N_FTOI_B,
         S_N_FTOI_W,
@@ -1244,7 +1245,7 @@ module mpy_core
             S_RX_SI: begin is_t <= mv; is_c <= ty_stop; gosub(S_ISSUB, S_RX_SI2); end
             S_RX_SI2: if (is_r) begin sp <= sp - 7'd4; pc <= aux[31:0]; st <= S_FETCH; end
                       else st <= S_RX_TB;
-            S_RX_TB: if ((fflags & (FF_NOTB | FF_FW)) || adr(xc) == EMERG_ADDR ||
+            S_RX_TB: if ((fflags & (FF_NOTB | FF_FW)) ||
                          (!rx_from && (op == 8'h5d || op == 8'h64)))
                          st <= S_RX_H;
                      else rd(rc + 4 * ABI_RC_OP_START, S_RX_TB1);
@@ -1731,8 +1732,8 @@ module mpy_core
             S_GI: begin
                 vs0 = 7'(sp - 7'd1);
                 if (tg(t[0]) == ABI_TAG_TUPLE || tg(t[0]) == ABI_TAG_BYTES || is_mut(t[0], ABI_MUT_LIST) ||
-                    is_mut(t[0], ABI_MUT_DICT) || is_mut(t[0], ABI_MUT_SET) || tg(t[0]) == ABI_TAG_ITER ||
-                    (tg(t[0]) == ABI_TAG_OBJECT && b1)) begin
+                    is_mut(t[0], ABI_MUT_DICT) || is_mut(t[0], ABI_MUT_SET) || is_mut(t[0], ABI_MUT_BYTEARRAY) ||
+                    tg(t[0]) == ABI_TAG_ITER || (tg(t[0]) == ABI_TAG_OBJECT && b1)) begin
                     rf[6'(vs0 + 7'd1)] <= vint(32'd0); rf[6'(vs0 + 7'd2)] <= vint(32'd0);
                     rf[6'(vs0 + 7'd3)] <= vint(
                         (tg(t[0]) == ABI_TAG_ITER) ? ABI_IT_HEAPITER :
@@ -2111,6 +2112,10 @@ module mpy_core
                     ABI_N_BCMP: begin si_v <= ab[ab_lo]; gosub(S_SINFO, S_N_BCMP1); end
                     ABI_N_HASH: begin hk <= ab[ab_lo]; gosub(S_HASH, S_N_HASH); end
                     ABI_N_DATA: begin si_v <= ab[ab_lo]; gosub(S_DADDR, S_N_DATA); end
+                    ABI_N_FGET: if (fprev == 32'd0) deliver(VNULL, crk);
+                        else begin x3 <= v1; rd(fprev + (v1 << 2), S_N_FGET); end
+                    ABI_N_FLOC: if (fprev == 32'd0) deliver(VNULL, crk);
+                        else rd(fprev + 32'd64 + (v1 << 2), S_N_RV);
                     ABI_N_SLEN: if (tg(ab[ab_lo]) == ABI_TAG_MUT || tg(ab[ab_lo]) == ABI_TAG_TUPLE) rd(adr(ab[ab_lo]), S_N_RINT);
                         else begin si_v <= ab[ab_lo]; gosub(S_SINFO, S_N_LEN_S); end
                     ABI_N_LIST_APPEND: if (v0 != 32'd2 || !is_mut(ab[ab_lo], ABI_MUT_LIST)) st <= S_NAT_FB;
@@ -2235,6 +2240,8 @@ module mpy_core
                      else begin la_i <= la_i + 32'd1; st <= S_N_BCL; end
             S_N_HASH: deliver(hok ? vint(hh) : VSTOP, crk);
             S_N_DATA: deliver(vint(si_addr), crk);
+            S_N_FGET: if (x3 >= 32'd6 && x3 <= 32'd11) deliver(mv, crk);
+                      else deliver(vint(md), crk);
             S_N_BEI: wr(adr(t[0]) + 8, tb_v, S_N_NONE);
             S_N_RANGE: begin
                 t[0] <= {ABI_TAG_RANGE, al_a};
@@ -2260,7 +2267,9 @@ module mpy_core
                 else if (al_soft) begin al_ok <= 1'b0; al_a <= 32'd0; ret(); end
                 else begin
                     al_soft <= 1'b0;
-                    wr(EMERG_ADDR + 16, vint(al_n << 2), S_AL_OOM);
+                    // Word 4 of the emergency exception is its __dict__. The byte
+                    // count lives in the free sysroot word just past the object.
+                    wr(EMERG_ADDR + 20, vint(al_n << 2), S_AL_OOM);
                 end
             end
             S_AL_RT: begin gc_alloc_req <= 1'b1; st <= S_AL_W; end
@@ -2607,7 +2616,9 @@ module mpy_core
             S_AT_VK: begin
                 if (md == ABI_OB_FUNCTION || md == ABI_OB_BUILTIN) at_kind <= at_ty ? 2'd1 : 2'd2;
                 else if (md == ABI_OB_STATICMETHOD || md == ABI_OB_CLASSMETHOD || md == ABI_OB_PROPERTY) at_kind <= 2'd3;
-                else at_kind <= 2'd1;
+                // Any other object found on a class may be a data descriptor.
+                // _getattr returns it unchanged when it has no __get__.
+                else at_kind <= 2'd3;
                 ret();
             end
 
@@ -2636,7 +2647,7 @@ module mpy_core
             S_IT_V: begin it_val <= mv; iv[1] <= vint(it_i + 32'd1); ret(); end
             S_IT_BL: if (it_i >= si_len) begin it_stop <= 1'b1; ret(); end
                      else rd(si_addr + {it_i[31:2], 2'b00}, S_IT_BB);
-            S_IT_BB: if (tg(iv[0]) == ABI_TAG_BYTES) begin
+            S_IT_BB: if (tg(iv[0]) == ABI_TAG_BYTES || is_mut(iv[0], ABI_MUT_BYTEARRAY)) begin
                          it_val <= vint({24'd0, byte_of(md, it_i[1:0])}); iv[1] <= vint(it_i + 32'd1); ret();
                      end else rd(h_chars + 4 * byte_of(md, it_i[1:0]), S_IT_SC);
             S_IT_SC: begin it_val <= {ABI_TAG_QSTR, md}; iv[1] <= vint(it_i + 32'd1); ret(); end

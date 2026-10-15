@@ -221,13 +221,17 @@ EXC_BASES = {
     "NotImplementedError": "RuntimeError",
     "UnicodeError": "ValueError",
 }
-NATIVE_BASES = {"bool": "int"}
+# bool prints and subclasses as its own type. The ALU still treats True and
+# False as integers because of their value tags, not because of this table.
+NATIVE_BASES = {}
 FIRST_EXC_TYPE = TYPE_ID["BaseException"]
 
 # Names the type prints with when it differs from the table key.
 TYPE_PRINT_NAME = {
     "builtin_function": "function",
     "closure": "closure",
+    "ellipsis": "",
+    "NotImplementedType": "",
 }
 
 # Types callable from Python and found in the builtins dict.
@@ -276,6 +280,8 @@ NATIVES = [
     "_hash",     # _hash(x) -> hash of a simple key, or STOP
     "_data",     # _data(s) -> INT address of the bytes of a str/bytes/qstr
     "_slen",     # _slen(s) -> byte length of a str/bytes/qstr
+    "_fget",     # _fget(i) -> caller frame header word i
+    "_floc",     # _floc(i) -> caller frame local i
     # type methods
     "list.append", "object.__init__", "BaseException.__init__",
     # constructors
@@ -359,7 +365,7 @@ MSGS = [
     ("NO_ACTIVE_EXC", "RuntimeError", "no active exception to reraise"),
     ("ZERO_STEP", "ValueError", "zero step"),
     ("STOP_ITER", "StopIteration", None),
-    ("MEMORY", "MemoryError", None),
+    ("MEMORY", "MemoryError", "memory allocation failed"),
     ("ASSERT", "AssertionError", None),
     ("BYTES_INDEX", "IndexError", "bytes index out of range"),
     ("RANGE_INDEX", "IndexError", "range index out of range"),
