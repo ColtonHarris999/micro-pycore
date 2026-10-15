@@ -84,6 +84,7 @@ def build_sim(force: bool = False, quiet: bool = True) -> Path:
     sources = [ROOT / p for p in RTL + RTL_INCLUDES]
     if not force and not _newer(SIM, sources):
         return SIM
+    (SIM_DIR / "obj").mkdir(parents=True, exist_ok=True)
     cmd = [
         os.environ.get("VERILATOR", "verilator"), "-sv", "--binary", "--timing",
         "--timescale", "1ns/1ps", "-O3", "--x-assign", "fast", "--x-initial", "fast",
