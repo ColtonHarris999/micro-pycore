@@ -194,9 +194,11 @@ def _rel_name(name, level, globs):
     return _join_dots(parts)
 
 
-def _import(name, fromlist, level, globs):
-    if level:
-        name = _rel_name(name, level, globs)
+# Bit 1 of a module descriptor's flags word. The linker sets it for __init__.py.
+_MD_FLAG_PACKAGE = 2
+
+
+def _load_mod(name):
     if _streq(name, 'sys'):
         return _sysget(SR_FW1)
     if _streq(name, 'gc'):
@@ -211,13 +213,53 @@ def _import(name, fromlist, level, globs):
     if nat is not NULL:
         return nat
     fr = _dget(_FROZEN, name)
-    if fr is not NULL:
-        g = {'__name__': name}
-        mod = _mk_module(name, g)
-        mods[name] = mod
-        _callns(fr, g)
-        return mod
-    raise ImportError(_s("no module named '", name, "'"))
+    if fr is NULL:
+        return NULL
+    g = {'__name__': name}
+    g['__file__'] = _mk(TAG_QSTR, _peek32(fr + 4 * MD_SOURCE_FILE))
+    # A package can hold submodules. __path__ is what marks it as one.
+    if _peek32(fr + 4 * MD_FLAGS) & _MD_FLAG_PACKAGE:
+        g['__path__'] = name
+    mod = _mk_module(name, g)
+    mods[name] = mod
+    _callns(fr, g)
+    return mod
+
+
+def _import(name, fromlist, level, globs):
+    if level:
+        name = _rel_name(name, level, globs)
+    # import a.b.c walks each level. fromlist is None for a plain import,
+    # which binds the top-level package; any other fromlist returns the leaf.
+    parts = _dot_parts(name)
+    top = NULL
+    parent = NULL
+    acc = ''
+    i = 0
+    n = len(parts)
+    while i < n:
+        comp = parts[i]
+        if i == 0:
+            full = comp
+        else:
+            full = _cat(_cat(acc, '.'), comp)
+        if parent is not NULL and _dget(_ld(parent, 2), '__path__') is NULL:
+            raise ImportError(_s("no module named '", full, "'"))
+        mod = _load_mod(full)
+        if mod is NULL:
+            raise ImportError(_s("no module named '", full, "'"))
+        if parent is not NULL:
+            _ld(parent, 2)[comp] = mod
+        if top is NULL:
+            top = mod
+        parent = mod
+        acc = full
+        i += 1
+    if top is NULL:
+        raise ImportError(_s("no module named '", name, "'"))
+    if fromlist is None:
+        return top
+    return parent
 
 
 def _import_from(mod, name):
