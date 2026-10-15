@@ -150,18 +150,16 @@ package mpy_alu_pkg;
     endfunction
 
     // An integral binary32 (including the infinities' neighbours).
+    // The shift stays in the comparison. A separate mask assignment is
+    // moved after its use by Verilator -O3, which then sees a zero mask.
     function automatic logic mpy_f32_integral(input logic [31:0] f);
-        logic [7:0]  e;
-        logic [22:0] mask;
+        logic [7:0] e;
         begin
             e = f[30:23];
             if (e == 8'hFF) mpy_f32_integral = 1'b0;
             else if (e >= 8'd150) mpy_f32_integral = 1'b1;
             else if (e < 8'd127) mpy_f32_integral = (f[30:0] == 31'd0);
-            else begin
-                mask = 23'h7FFFFF >> (int'(e) - 127);
-                mpy_f32_integral = (f[22:0] & mask) == 23'd0;
-            end
+            else mpy_f32_integral = (f[22:0] & (23'h7FFFFF >> (e - 8'd127))) == 23'd0;
         end
     endfunction
 
@@ -176,113 +174,100 @@ package mpy_alu_pkg;
         end
     endfunction
 
-    // binary32 -> binary64, exact for every finite value.
-    function automatic logic [63:0] mpy_f32_to_f64(input logic [31:0] f);
-        logic        sign;
-        logic [7:0]  exp;
-        logic [22:0] frac;
-        logic [4:0]  sh;
-        logic [22:0] shifted;
-        integer      i;
-        begin
-            sign = f[31];
-            exp  = f[30:23];
-            frac = f[22:0];
-            if (exp == 8'hFF) begin
-                if (frac == 23'b0)
-                    mpy_f32_to_f64 = {sign, 11'h7FF, 52'b0};
-                else
-                    mpy_f32_to_f64 = {sign, 11'h7FF, frac, 29'b0};
-            end else if ((exp == 8'h00) && (frac == 23'b0)) begin
-                mpy_f32_to_f64 = {sign, 63'b0};
-            end else if (exp == 8'h00) begin
-                sh = 5'd22;
-                for (i = 0; i < 23; i++) begin
-                    if (frac[i])
-                        sh = 5'(22 - i);
-                end
-                shifted = frac << sh;
-                mpy_f32_to_f64 = {sign, 11'd896 - {6'b0, sh}, shifted[21:0], 30'b0};
-            end else begin
-                mpy_f32_to_f64 = {sign, ({3'b0, exp} + 11'd896), frac, 29'b0};
-            end
-        end
-    endfunction
-
-    // binary64 -> binary32, round to nearest even.
-    function automatic logic [31:0] mpy_f64_to_f32(input logic [63:0] d);
-        logic               sign;
-        logic [10:0]        exp;
-        logic [51:0]        frac;
-        logic signed [12:0] exp32;
-        logic [23:0]        sumf;
-        logic               round_up;
-        logic [52:0]        sig;
-        logic [11:0]        sh;
-        logic [52:0]        shifted;
-        logic [23:0]        mag;
-        logic               guard;
-        logic               sticky;
-        integer             i;
-        begin
-            sign = d[63];
-            exp  = d[62:52];
-            frac = d[51:0];
-            if (exp == 11'h7FF) begin
-                if (frac == 52'b0)
-                    mpy_f64_to_f32 = {sign, 8'hFF, 23'b0};
-                else
-                    mpy_f64_to_f32 = {sign, 8'hFF, 1'b1, 22'b0};
-            end else if (d[62:0] == 63'b0) begin
-                mpy_f64_to_f32 = {sign, 31'b0};
-            end else if (exp == 11'b0) begin
-                mpy_f64_to_f32 = {sign, 31'b0};
-            end else begin
-                exp32 = $signed({2'b0, exp}) - 13'sd896;
-                if (exp32 >= 13'sd255) begin
-                    mpy_f64_to_f32 = {sign, 8'hFF, 23'b0};
-                end else if (exp32 >= 13'sd1) begin
-                    round_up = d[28] && (|d[27:0] || d[29]);
-                    sumf = {1'b0, d[51:29]} + {23'b0, round_up};
-                    if (sumf[23]) begin
-                        exp32 = exp32 + 13'sd1;
-                        if (exp32 >= 13'sd255)
-                            mpy_f64_to_f32 = {sign, 8'hFF, 23'b0};
-                        else
-                            mpy_f64_to_f32 = {sign, exp32[7:0], 23'b0};
-                    end else begin
-                        mpy_f64_to_f32 = {sign, exp32[7:0], sumf[22:0]};
-                    end
-                end else begin
-                    sig = {1'b1, frac};
-                    sh  = 12'd926 - {1'b0, exp};
-                    if (sh >= 12'd54) begin
-                        mpy_f64_to_f32 = {sign, 31'b0};
-                    end else if (sh == 12'd53) begin
-                        mpy_f64_to_f32 = {sign, 8'b0, 22'b0, (sig[52] && (|sig[51:0]))};
-                    end else begin
-                        shifted = sig >> sh[5:0];
-                        mag     = {1'b0, shifted[22:0]};
-                        guard   = sig[sh[5:0] - 6'd1];
-                        sticky  = 1'b0;
-                        for (i = 0; i < 52; i++) begin
-                            if (12'(i) < (sh - 12'd1))
-                                sticky = sticky | sig[i];
-                        end
-                        if (guard && (sticky || mag[0]))
-                            mag = mag + 24'd1;
-                        if (mag[23])
-                            mpy_f64_to_f32 = {sign, 8'd1, 23'b0};
-                        else
-                            mpy_f64_to_f32 = {sign, 8'b0, mag[22:0]};
-                    end
-                end
-            end
-        end
-    endfunction
-
 endpackage
 // verilator lint_on DECLFILENAME
+
+// Widen binary32 to binary64 with wires. The subnormal shift used to live
+// in a function whose blocking assignments Verilator -O3 reordered.
+module mpy_f32_widen (
+    input  logic [31:0] f_i,
+    output logic [63:0] d_o
+);
+    logic        sign;
+    logic [7:0]  exp;
+    logic [22:0] frac;
+    logic [4:0]  sh;
+    logic [22:0] shifted;
+
+    assign sign = f_i[31];
+    assign exp  = f_i[30:23];
+    assign frac = f_i[22:0];
+    assign sh = frac[22] ? 5'd0  : frac[21] ? 5'd1  : frac[20] ? 5'd2  :
+                frac[19] ? 5'd3  : frac[18] ? 5'd4  : frac[17] ? 5'd5  :
+                frac[16] ? 5'd6  : frac[15] ? 5'd7  : frac[14] ? 5'd8  :
+                frac[13] ? 5'd9  : frac[12] ? 5'd10 : frac[11] ? 5'd11 :
+                frac[10] ? 5'd12 : frac[9]  ? 5'd13 : frac[8]  ? 5'd14 :
+                frac[7]  ? 5'd15 : frac[6]  ? 5'd16 : frac[5]  ? 5'd17 :
+                frac[4]  ? 5'd18 : frac[3]  ? 5'd19 : frac[2]  ? 5'd20 :
+                frac[1]  ? 5'd21 : 5'd22;
+    assign shifted = frac << sh;
+
+    always_comb begin
+        if (exp == 8'hFF) begin
+            d_o = (frac == 23'b0) ? {sign, 11'h7FF, 52'b0}
+                                  : {sign, 11'h7FF, frac, 29'b0};
+        end else if (exp == 8'h00 && frac == 23'b0) begin
+            d_o = {sign, 63'b0};
+        end else if (exp == 8'h00) begin
+            d_o = {sign, 11'd896 - {6'b0, sh}, shifted[21:0], 30'b0};
+        end else begin
+            d_o = {sign, ({3'b0, exp} + 11'd896), frac, 29'b0};
+        end
+    end
+endmodule
+
+// Narrow binary64 to binary32 with wires, not a function. Verilator -O3
+// schedules a function's blocking assignments after the expression that
+// reads them, so the fraction was added after it had already been used.
+module mpy_f32_narrow (
+    input  logic [63:0] d_i,
+    output logic [31:0] q_o
+);
+    logic               sign;
+    logic [10:0]        exp;
+    logic [51:0]        frac;
+    logic signed [12:0] exp32;
+    logic               round_up;
+    logic [23:0]        sumf;
+    logic [52:0]        sig;
+    logic [11:0]        sh;
+    logic [52:0]        shifted;
+    logic [52:0]        below;
+    logic [23:0]        mag;
+
+    assign sign     = d_i[63];
+    assign exp      = d_i[62:52];
+    assign frac     = d_i[51:0];
+    assign exp32    = $signed({2'b0, exp}) - 13'sd896;
+    assign round_up = d_i[28] && (|d_i[27:0] || d_i[29]);
+    assign sumf     = {1'b0, d_i[51:29]} + {23'b0, round_up};
+    assign sig      = {1'b1, frac};
+    assign sh       = 12'd926 - {1'b0, exp};
+    assign shifted  = sig >> sh[5:0];
+    assign below    = (sh <= 12'd1) ? 53'd0 : (sig & ((53'd1 << (sh[5:0] - 6'd1)) - 53'd1));
+    assign mag      = {1'b0, shifted[22:0]}
+                    + {23'd0, (sh != 12'd0) && sig[sh[5:0] - 6'd1] && ((|below) || shifted[0])};
+
+    always_comb begin
+        if (exp == 11'h7FF) begin
+            q_o = (frac == 52'b0) ? {sign, 8'hFF, 23'b0} : {sign, 8'hFF, 1'b1, 22'b0};
+        end else if (d_i[62:0] == 63'b0 || exp == 11'b0) begin
+            q_o = {sign, 31'b0};
+        end else if (exp32 >= 13'sd255) begin
+            q_o = {sign, 8'hFF, 23'b0};
+        end else if (exp32 >= 13'sd1) begin
+            q_o = sumf[23] ? ((exp32 >= 13'sd254) ? {sign, 8'hFF, 23'b0}
+                                                  : {sign, exp32[7:0] + 8'd1, 23'b0})
+                           : {sign, exp32[7:0], sumf[22:0]};
+        end else if (sh >= 12'd54) begin
+            q_o = {sign, 31'b0};
+        end else if (sh == 12'd53) begin
+            q_o = {sign, 8'b0, 22'b0, sig[52] && (|sig[51:0])};
+        end else begin
+            q_o = mag[23] ? {sign, 8'd1, 23'b0} : {sign, 8'b0, mag[22:0]};
+        end
+    end
+endmodule
 
 module mpy_alu (
     input  logic        clk_i,
@@ -309,6 +294,7 @@ module mpy_alu (
     logic        small_r;
     logic [63:0] a, b;
     logic [31:0] fa, fb;
+    logic [63:0] fa64, fb64;
 
     // Integer datapath (combinational ops).
     logic [4:0]  iop;
@@ -376,6 +362,7 @@ module mpy_alu (
     // Float unit in binary64.
     logic [4:0]   fop;
     logic [127:0] fres;
+    logic [31:0]  fnarrow;
     logic         fexc, fdone, fstall, fbusy;
     always_comb begin
         case (op)
@@ -392,9 +379,12 @@ module mpy_alu (
     upycore_fpu u_fpu (
         .clk_i(clk_i), .rst_n_i(rst_n_i), .start_i(st == A_FPU),
         .op_i(fop), .complex_i(1'b0),
-        .op_a_i({64'd0, mpy_f32_to_f64(fa)}), .op_b_i({64'd0, mpy_f32_to_f64(fb)}),
+        .op_a_i({64'd0, fa64}), .op_b_i({64'd0, fb64}),
         .result_o(fres), .exception_o(fexc), .done_o(fdone), .stall_o(fstall), .busy_o(fbusy)
     );
+    mpy_f32_widen u_wa (.f_i(fa), .d_o(fa64));
+    mpy_f32_widen u_wb (.f_i(fb), .d_o(fb64));
+    mpy_f32_narrow u_narrow (.d_i(fres[63:0]), .q_o(fnarrow));
 
     // Accept: everything that finishes in one cycle is answered here.
     always_ff @(posedge clk_i or negedge rst_n_i) begin
@@ -544,7 +534,7 @@ module mpy_alu (
                         // Only ** overflow is left; powf gives inf with the sign of the result.
                         res_o <= {32'd0, fa[31] && mpy_f32_odd(fb), 8'hFF, 23'd0};
                     end else begin
-                        res_o <= {32'd0, mpy_f64_to_f32(fres[63:0])};
+                        res_o <= {32'd0, fnarrow};
                     end
                     st <= A_IDLE;
                     done_o <= 1'b1;
