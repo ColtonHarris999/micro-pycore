@@ -191,6 +191,39 @@ def _utf8_at(d, i):
             ((_peek8(d, i + 2) & 0x3F) << 6) | (_peek8(d, i + 3) & 0x3F)), 4
 
 
+def _utf8_len(s):
+    # Code points in s. _slen is the byte length.
+    n = _slen(s)
+    d = _data(s)
+    i = 0
+    k = 0
+    while i < n:
+        _cp, w = _utf8_at(d, i)
+        i += w
+        k += 1
+    return k
+
+
+def _ustr_at(s, i):
+    # Code point i of a non-ASCII str, as a one-character str.
+    n = _utf8_len(s)
+    if i < 0:
+        i += n
+    if i < 0 or i >= n:
+        raise IndexError('string index out of range')
+    d = _data(s)
+    p = 0
+    k = 0
+    while k < i:
+        _cp, w = _utf8_at(d, p)
+        p += w
+        k += 1
+    c, w = _utf8_at(d, p)
+    if c < 128:
+        return _ch(c)
+    return _substr(s, p, p + w, TAG_STR)
+
+
 # ---------------------------------------------------------------------------
 # repr / str
 
