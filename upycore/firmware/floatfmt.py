@@ -39,7 +39,7 @@ def _pow5(n):
     return 0.0
 
 
-# num * 10**e. Shift the binary exponent, then multiply by 5**e.
+# decimal_exp multiplies by a power of five, in binary32, as the oracle does.
 def _decimal_exp(num, e):
     if e == 0 or num == 0.0:
         return num

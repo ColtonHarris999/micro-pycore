@@ -63,6 +63,4 @@ Clone with the MicroPython pin:
 git clone --recurse-submodules <this-repo>
 ```
 
-Float multiply and divide still drop fraction bits on values that are not
-dyadic rationals. Integer, container, call, and exception programs are the
-paths `make test` covers.
+`make test` covers a hello program and a raised `ValueError`.

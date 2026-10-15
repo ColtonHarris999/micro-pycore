@@ -151,6 +151,10 @@ module upycore_fpu #(
     logic         pow_neg_r, pow_recip_r;
     logic         cdiv_b_r;               // Smith's algorithm, |bi| > |br| path
     logic [127:0] res_r;
+    // Direct multiply holds the shared multiplier with a register. Reading
+    // the multiplier's busy back into this issue block is a combinational
+    // loop through u_pow_start, and that loop drops fraction bits.
+    logic         mul_run;
 
     // Operand shorthands.
     logic [63:0] ar, ai, br, bi;
@@ -452,7 +456,7 @@ module upycore_fpu #(
             S_DIRECT: begin
                 u_add_start = add_busy;
                 u_sub       = (op_i == UPY_ALU_SUB);
-                u_mul_start = mul_busy;
+                u_mul_start = mul_run;
                 u_div_start = div_busy;
             end
 
@@ -563,13 +567,16 @@ module upycore_fpu #(
             pow_recip_r <= 1'b0;
             cdiv_b_r    <= 1'b0;
             res_r       <= '0;
+            mul_run     <= 1'b0;
         end else if (!start_i) begin
             state_r <= S_IDLE;
+            mul_run <= 1'b0;
         end else begin
             unique case (state_r)
                 S_IDLE: begin
                     if (dec_kind == K_DIRECT) begin
                         state_r <= S_DIRECT;
+                        mul_run <= dec_mul;
                     end else if (dec_kind == K_SEQ) begin
                         state_r     <= dec_next;
                         cdiv_b_r    <= dec_cdiv_b;
@@ -587,7 +594,10 @@ module upycore_fpu #(
                     // K_COMB / K_EXC complete in this cycle.
                 end
                 S_DIRECT: begin
-                    if (u_done) state_r <= S_IDLE;
+                    if (u_done) begin
+                        state_r <= S_IDLE;
+                        mul_run <= 1'b0;
+                    end
                 end
 
                 // ---- float % : CPython float_rem ----
