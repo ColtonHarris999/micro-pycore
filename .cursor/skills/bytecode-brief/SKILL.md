@@ -1,8 +1,8 @@
 ---
 name: bytecode-brief
 description: >-
-  Brief on a single CPython 3.14 bytecode for PyCore: official semantics plus
-  implementation status. Use when the user asks about a specific opcode,
+  Brief on one MicroPython v1.29.0 bytecode for uPyCore: catalog row plus
+  where the hart handles it. Use when the user asks about a specific opcode,
   mentions "bytecode brief", or names an opcode like LOAD_FAST or BINARY_OP.
 disable-model-invocation: true
 ---
@@ -13,61 +13,33 @@ Answer with **only** the template below. No preamble, no closing summary.
 
 ## Before writing
 
-1. **CPython 3.14 semantics** — paraphrase the official `dis` docs for this opcode (https://docs.python.org/3.14/library/dis.html). One short paragraph; stay close to the documented stack effect and purpose.
-2. **PyCore status** — read, in order:
-   - `pycore/targets/pycore.json` → `opcodes.<NAME>`
-   - matching row in `pycore/docs/bytecode_support.md`
-   - optional: grep the repo for decode/execute handling if status is `execute` or `partial`
-3. If the opcode is unknown or not in 3.14, say so in the PyCore section and stop.
+1. **MicroPython v1.29.0** — read the opcode's row in `upycore/targets/upycore.json` (`name`, `opcode`, `format`, `stack_effect`, `phase`). One short paragraph on what the bytecode does. Stay with the catalog and `upycore/docs/mpy_bytecode.md`; do not invent a CPython 3.14 encoding.
+2. **uPyCore status** — grep `upycore/rtl/mpy_decode.sv` and `upycore/rtl/mpy_core.sv` for the opcode. Say which phase the catalog assigns and whether the hart executes it, leaves it to firmware, or rejects it.
+3. If the name is not in the catalog, say so and stop.
 
 ## Output template
-
-Copy this structure exactly. Replace `{…}` placeholders; delete lines marked *(optional)* when empty.
 
 ```markdown
 ## `{OPCODE}`
 
 | | |
 |---|---|
-| **Support** | `{execute \| partial \| strip \| reject \| trap}` |
-| **hw_class** | `{REG \| IMM \| CONST \| ALU1 \| ALUN \| PRED \| BRANCH \| FRAME \| OBJECT \| INTERNAL}` |
-| **Stack** | `{net stack delta, e.g. +1 / −2 / 0}` *(optional)* |
+| **Opcode** | `{decimal from the catalog}` |
+| **Format** | `{byte \| qstr \| varuint \| offset \| ...}` |
+| **Stack** | `{stack_effect}` |
+| **Phase** | `{phase}` |
 
-### CPython 3.14
+### MicroPython
 
-{One paragraph: what the opcode does, stack operands, and oparg meaning. Plain language; no bullet lists.}
+{One paragraph: operand shape and stack effect from the catalog.}
 
-### PyCore
+### uPyCore
 
-{One paragraph: current support level, whether preprocess rejects or hardware traps, which datapath unit would handle it, and the smallest plausible next step if not fully supported. Reference concrete files or modules only when helpful.}
+{One paragraph: where decode or the core handles it, or that it is still firmware-only.}
 ```
 
 ## Style rules
 
-- Exactly two body sections: **CPython 3.14** and **PyCore**.
-- Each body section is **one paragraph** (3–5 sentences).
-- Do not duplicate the long table from `bytecode_support.md`; synthesize it.
-- Use `hw_class` and `support` values from `pycore.json`, not guesses.
-- For `BINARY_OP` / `COMPARE_OP`, mention oparg only if the user named a specific oparg.
-
-## Example invocation
-
-User: `bytecode brief: LOAD_FAST`
-
-Agent output:
-
-## `LOAD_FAST`
-
-| | |
-|---|---|
-| **Support** | `execute` |
-| **hw_class** | `REG` |
-| **Stack** | `+1` |
-
-### CPython 3.14
-
-…
-
-### PyCore
-
-…
+- Exactly two body sections: **MicroPython** and **uPyCore**.
+- Each body section is **one paragraph**.
+- Use catalog values, not guesses.
