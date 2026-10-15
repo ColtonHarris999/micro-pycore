@@ -130,9 +130,14 @@ module mpy_gc #(
     assign collections_o  = ncoll;
     assign overflows_o    = novf;
 
+    // A_FREE is 2'b00. Simulation clears the table explicitly; synthesis
+    // relies on the allocation table powering up as zero so Yosys does not
+    // unroll a POOL_BYTES/16 loop at elaboration.
+`ifndef SYNTHESIS
     initial begin
         for (int i = 0; i < NB; i++) atb[i] = A_FREE;
     end
+`endif
 
     // Marks a candidate (registered by the caller state) and pushes it.
     task automatic try_mark(input logic [BW-1:0] b);

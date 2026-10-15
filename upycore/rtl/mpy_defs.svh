@@ -13,6 +13,10 @@ localparam int MPY_TAG_WIDTH   = 4;
 localparam int MPY_ENTRY_WIDTH = MPY_TAG_WIDTH + MPY_VAL_WIDTH; // 36
 localparam int MPY_TAG_LSB     = MPY_VAL_WIDTH;                 // 32
 
+// Architectural register file (upycore/docs/mpy_memory_map.md).
+localparam int MPY_RF_DEPTH  = 64;
+localparam int MPY_RF_ADDR_W = 6; // $clog2(MPY_RF_DEPTH)
+
 // Locked tag table. 0101 stays unassigned.
 localparam logic [3:0] MPY_TAG_CONTROL    = 4'b0000;
 localparam logic [3:0] MPY_TAG_INT        = 4'b0001;

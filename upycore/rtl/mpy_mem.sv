@@ -60,6 +60,10 @@ module mpy_mem #(
             merged[8*b +: 8] = be_r[b] ? wdata_r[8*b +: 8] : sword[8*b +: 8];
     end
 
+    // Simulation loads the linked image through plusargs. Synthesis leaves
+    // the arrays for the backend memory flow: flash is programmed offline
+    // and SRAM powers up as zero (A_FREE / empty tags).
+`ifndef SYNTHESIS
     initial begin
         string path;
         for (int i = 0; i < MPY_FLASH_WORDS; i++) flash[i] = '0;
@@ -69,6 +73,7 @@ module mpy_mem #(
         if ($value$plusargs("IMAGE=%s", path)) $readmemh(path, flash);
         if ($value$plusargs("TAGS=%s", path)) $readmemh(path, flash_tags);
     end
+`endif
 
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
