@@ -30,7 +30,7 @@ compare = { file = "hw/alu/compare.py" }
 truth = { file = "hw/alu/truth.py" }
 divzero = { file = "hw/alu/divzero.py" }
 overflow = { file = "hw/alu/overflow.py" }
-floats = { file = "hw/alu/floats.py", cycles = 30_000_000, xfail = "float values do not match the oracle" }
+floats = { file = "hw/alu/floats.py", cycles = 30_000_000 }
 complex = { file = "hw/alu/complex.py", cycles = 30_000_000, xfail = "complex values do not match the oracle" }
 
 [control]

@@ -39,9 +39,7 @@ def _pow5(n):
     return 0.0
 
 
-# decimal_exp multiplies by a power of five. The FPU currently drops the
-# fraction bits of a binary32 value, so this matches the oracle only for
-# dyadic rationals (1.0, 2.0, 0.5, ...).
+# num * 10**e. Shift the binary exponent, then multiply by 5**e.
 def _decimal_exp(num, e):
     if e == 0 or num == 0.0:
         return num
