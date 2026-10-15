@@ -2,3 +2,7 @@
 	path = vendor/micropython
 	url = https://github.com/micropython/micropython.git
 	shallow = true
+[submodule "vendor/upy2"]
+	path = vendor/upy2
+	url = https://github.com/ColtonHarris999/uPy2.git
+	shallow = true

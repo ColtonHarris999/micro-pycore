@@ -1,6 +1,6 @@
 # Incorporating the uPy2 compiler
 
-Status: **plan.** The hart runs `.mpy` from host `mpy-cross`. `compile`, `exec`, and `eval` raise `NotImplementedError`. The compiler that replaces that host step already exists, in [uPy2](https://github.com/ColtonHarris999/uPy2) at `72bfd5c145215ea76815a2ffa9762a7995784bd1` (`mpyc/`, MicroPython v1.29.0 bytecode).
+Status: **in progress.** The hardware suite is compiled with host `mpy-cross` and with the vendored uPy2 compiler (`make test-compiler`). Device `compile()` is still the loader in §5.3. The compiler that replaces the host step already exists, in [uPy2](https://github.com/ColtonHarris999/uPy2) at `72bfd5c145215ea76815a2ffa9762a7995784bd1` (`mpyc/`, MicroPython v1.29.0 bytecode).
 
 This plan is the join. uPy2 owns the compiler and its corpus. This repo owns the runtime the compiler runs on, and the loader that turns the compiler's `.mpy` bytes into a call the hart can make. Both sides change. The changes are listed separately so a compiler fix lands in uPy2 and a runtime fix lands here.
 

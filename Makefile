@@ -2,6 +2,7 @@
 #
 #   make test          build mpy-cross if needed, verilate, run the hardware suite
 #   make test-hw       the hardware suite on its own
+#   make test-compiler compile the suite with the uPy2 compiler and run it
 #   make regen-goldens  rewrite suite goldens from the unix oracle
 #   make run RUN=path  run one MicroPython program
 #   make oracle        build the 32-bit unix oracle and smoke it
@@ -16,7 +17,7 @@ DOCKER_IMAGE ?= upycore-sim:local
 ORACLE := build/oracle/src/ports/unix/build-upycore/micropython
 
 .PHONY: test sim fw run oracle oracle-header oracle-variant oracle-smoke mpy-cross \
-	docker-build docker-test test-hw regen-goldens check-goldens clean
+	docker-build docker-test test-hw test-compiler regen-goldens check-goldens clean
 
 $(MPY_CROSS):
 	variants/upycore/build.sh mpy-cross
@@ -35,13 +36,20 @@ run: $(MPY_CROSS)
 test: $(MPY_CROSS)
 	$(PYTHON) upycore/tests/test_mpy_periph_model.py
 	$(PYTHON) upycore/tests/test_hw_manifest.py
+	$(PYTHON) upycore/tools/compiler_suite.py
 	$(PYTHON) $(BUILD_PY) sim
 	$(PYTHON) upycore/tools/hw_tests.py
+	$(PYTHON) upycore/tools/hw_tests.py --compiler mpyc
 	@if [ -x "$(ORACLE)" ]; then $(PYTHON) upycore/tools/hw_tests.py --check-goldens; fi
 
 test-hw: $(MPY_CROSS)
 	$(PYTHON) $(BUILD_PY) sim
 	$(PYTHON) upycore/tools/hw_tests.py
+
+test-compiler: $(MPY_CROSS)
+	$(PYTHON) upycore/tools/compiler_suite.py --nstate
+	$(PYTHON) $(BUILD_PY) sim
+	$(PYTHON) upycore/tools/hw_tests.py --compiler mpyc
 
 regen-goldens:
 	variants/upycore/build.sh variant

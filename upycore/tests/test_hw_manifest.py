@@ -48,7 +48,7 @@ class ManifestTest(unittest.TestCase):
         self.assertTrue(alu)
         self.assertTrue(all(t.area == "alu" for t in alu))
         picked = hw_tests.select(tests, [], ["use_*"])
-        self.assertEqual(sorted(t.name for t in picked), ["use_helper", "use_pkg"])
+        self.assertEqual(sorted(t.name for t in picked), ["use_helper", "use_pkg", "use_rel"])
 
     def test_compare_ignores_addresses_only(self) -> None:
         detail = hw_tests.compare_streams(

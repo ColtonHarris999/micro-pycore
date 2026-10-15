@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Run the hardware tests in ``upycore/programs/hw_tests.toml``.
 
-Each test is a MicroPython program. The host compiles it with ``mpy-cross``,
-links the firmware and that bytecode into a flash image, and the simulator
-boots the image. ``_boot`` calls the program. The host then compares
-stdout, stderr, and the exit status with the golden files next to the
-source. Those files are the unix oracle's output (``make regen-goldens``).
+Each test is a MicroPython program. The host compiles it with ``mpy-cross``
+or the vendored uPy2 compiler (``--compiler mpyc``), links that bytecode
+and the firmware into a flash image, and the simulator boots the image.
+The firmware itself is always compiled with ``mpy-cross``. ``_boot`` calls
+the program. The host then compares stdout, stderr, and the exit status
+with the golden files next to the source. Those files are the unix
+oracle's output (``make regen-goldens``).
 
 Object addresses in ``repr`` are masked before the compare, so a live
 pointer may differ from the oracle's.
@@ -18,6 +20,7 @@ Usage::
     python3 upycore/tools/hw_tests.py --list
     python3 upycore/tools/hw_tests.py --regen          # rewrite goldens
     python3 upycore/tools/hw_tests.py --check-goldens  # oracle must match goldens
+    python3 upycore/tools/hw_tests.py --compiler mpyc  # same suite, uPy2 compiler
 """
 
 from __future__ import annotations
@@ -43,7 +46,6 @@ import mpy_build as build  # noqa: E402
 
 MANIFEST = ROOT / "upycore" / "programs" / "hw_tests.toml"
 PROGRAMS = ROOT / "upycore" / "programs"
-WORK = ROOT / "build" / "hw"
 
 # Addresses inside repr. The hex digits are the only part that may differ.
 _ADDR_RES = (
@@ -247,12 +249,12 @@ def compare_streams(
     return "".join(parts)
 
 
-def run_device(t: Test) -> Outcome:
+def run_device(t: Test, compiler: str = "mpy-cross") -> Outcome:
     if not t.source.is_file():
         return Outcome(t, False, f"missing {t.source}")
-    work = WORK / t.name
+    work = (ROOT / "build" / ("hw-mpyc" if compiler == "mpyc" else "hw")) / t.name
     try:
-        image = build.build_program(t.source, work, t.source.name, _modules(t))
+        image = build.build_program(t.source, work, t.source.name, _modules(t), compiler)
         res = build.run_image(image, max_cycles=t.cycles, timeout=t.timeout)
     except build.BuildError as exc:
         text = str(exc).strip().splitlines()
@@ -281,7 +283,7 @@ def _echo(line: str) -> None:
     print(line, flush=True)
 
 
-def run_tests(tests: list[Test], jobs: int) -> list[Outcome]:
+def run_tests(tests: list[Test], jobs: int, compiler: str = "mpy-cross") -> list[Outcome]:
     if not build.MPY_CROSS.is_file():
         raise SystemExit(
             f"hw_tests: mpy-cross not found at {build.MPY_CROSS} "
@@ -293,7 +295,7 @@ def run_tests(tests: list[Test], jobs: int) -> list[Outcome]:
     results: list[Outcome] = []
 
     def work(t: Test) -> None:
-        o = run_device(t)
+        o = run_device(t, compiler)
         with lock:
             results.append(o)
             cyc = f"cycles={o.cycles}" if o.cycles is not None else ""
@@ -369,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--regen", action="store_true", help="rewrite golden files from the oracle")
     ap.add_argument("--check-goldens", action="store_true", help="fail if the oracle disagrees with the goldens")
+    ap.add_argument("--compiler", choices=("mpy-cross", "mpyc"), default="mpy-cross",
+                    help="compiler for the test program and its frozen modules")
     args = ap.parse_args(argv)
 
     tests = load_manifest()
@@ -392,9 +396,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_goldens:
         return check_goldens(picked)
 
-    print(f"hw_tests: {len(picked)} test(s), {args.jobs} job(s)", flush=True)
+    print(f"hw_tests: {len(picked)} test(s), {args.jobs} job(s), compiler {args.compiler}", flush=True)
     start = time.monotonic()
-    results = run_tests(picked, args.jobs)
+    results = run_tests(picked, args.jobs, args.compiler)
     elapsed = time.monotonic() - start
     failed = [o for o in results if not o.ok]
     xfailed = [o for o in results if o.expected_fail]

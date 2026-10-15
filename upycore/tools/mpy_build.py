@@ -111,6 +111,41 @@ def mpy_cross(src: Path, out: Path, source_name: str) -> None:
         raise BuildError(f"mpy-cross {src}:\n{r.stdout}{r.stderr}")
 
 
+def _ensure_mpyc() -> None:
+    root = ROOT / "vendor" / "upy2"
+    if not (root / "mpyc" / "compile.py").is_file():
+        raise BuildError(
+            f"uPy2 pin missing at {root} (git submodule update --init vendor/upy2)"
+        )
+    entry = str(root)
+    if entry not in sys.path:
+        sys.path.insert(0, entry)
+
+
+def compile_mpyc(src: Path, out: Path, source_name: str) -> None:
+    """Compile one program with the vendored uPy2 compiler."""
+
+    _ensure_mpyc()
+    from mpyc.compile import CompileError, compile_source
+    from mpyc.parser import ParseError
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        data = compile_source(src.read_text(encoding="utf-8"), source_name, "exec", 0)
+    except (CompileError, ParseError) as exc:
+        raise BuildError(f"mpyc {src}: {exc}") from exc
+    out.write_bytes(data)
+
+
+def compile_user(src: Path, out: Path, source_name: str, compiler: str = "mpy-cross") -> None:
+    if compiler == "mpy-cross":
+        mpy_cross(src, out, source_name)
+    elif compiler == "mpyc":
+        compile_mpyc(src, out, source_name)
+    else:
+        raise BuildError(f"unknown compiler {compiler!r}")
+
+
 _FW_IMPORT = re.compile(r"^\s*from\s+(\.?_abi|micropython)\s+import\s+")
 
 
@@ -203,18 +238,24 @@ def run_image(image: Path, max_cycles: int = 50_000_000, trace: bool = False,
 
 
 def build_program(src: Path, work: Path, source_name: str | None = None,
-                  modules: dict[str, Path] | None = None) -> Path:
-    """Compile and link one program (plus frozen modules); returns the image prefix."""
+                  modules: dict[str, Path] | None = None,
+                  compiler: str = "mpy-cross") -> Path:
+    """Compile and link one program (plus frozen modules); returns the image prefix.
+
+    ``compiler`` selects the user-program compiler. The firmware is always
+    built with ``mpy-cross``. ``mpyc`` is the vendored uPy2 compiler.
+    """
 
     work.mkdir(parents=True, exist_ok=True)
     fw = build_firmware()
     name = source_name or src.name
     main_mpy = work / "main.mpy"
-    mpy_cross(src, main_mpy, name)
+    compile_user(src, main_mpy, name, compiler)
     specs = []
     for mname, mpath in (modules or {}).items():
         mm = work / (mname.replace(".", "_") + ".mpy")
-        mpy_cross(mpath, mm, mpath.name if mpath.name != "__init__.py" else f"{mname.replace('.', '/')}/__init__.py")
+        mod_name = mpath.name if mpath.name != "__init__.py" else f"{mname.replace('.', '/')}/__init__.py"
+        compile_user(mpath, mm, mod_name, compiler)
         kind = ":package" if mpath.name == "__init__.py" else ""
         specs.append(f"{mname}={mm}{kind}")
     return link(main_mpy, fw, work / "image", specs)

@@ -30,7 +30,10 @@ program under `upycore/programs/hw/`. The host compiles it with `mpy-cross`,
 links that bytecode and the firmware into a flash image, and the simulator
 boots the image so `_boot` runs the program. The run passes when stdout,
 stderr, and the exit status match the golden files beside the source.
-Those files are the unix oracle's output. `make test` runs the suite.
+Those files are the unix oracle's output. `make test` runs the suite twice:
+once from `mpy-cross` bytecode and once from the vendored uPy2 compiler
+(`vendor/upy2`, `mpyc`). `make test-compiler` is the second run on its own,
+plus a byte compare of the two compilers.
 `make regen-goldens` rewrites the goldens after `make oracle`. An `xfail`
 entry is a known mismatch: the run is expected to fail, and a pass fails
 the suite so the marker is removed with the fix.
