@@ -395,6 +395,11 @@ module mpy_alu (
         .op_a_i({64'd0, mpy_f32_to_f64(fa)}), .op_b_i({64'd0, mpy_f32_to_f64(fb)}),
         .result_o(fres), .exception_o(fexc), .done_o(fdone), .stall_o(fstall), .busy_o(fbusy)
     );
+    // Narrow outside the clocked block. Verilator -O3 drops the fraction
+    // bits when mpy_f64_to_f32 is invoked from the nonblocking assignment
+    // below; the same call in a continuous assignment keeps them.
+    logic [31:0] fres32;
+    assign fres32 = mpy_f64_to_f32(fres[63:0]);
 
     // Accept: everything that finishes in one cycle is answered here.
     always_ff @(posedge clk_i or negedge rst_n_i) begin
@@ -544,7 +549,7 @@ module mpy_alu (
                         // Only ** overflow is left; powf gives inf with the sign of the result.
                         res_o <= {32'd0, fa[31] && mpy_f32_odd(fb), 8'hFF, 23'd0};
                     end else begin
-                        res_o <= {32'd0, mpy_f64_to_f32(fres[63:0])};
+                        res_o <= {32'd0, fres32};
                     end
                     st <= A_IDLE;
                     done_o <= 1'b1;
