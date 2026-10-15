@@ -34,7 +34,9 @@ prepare() {
             echo "missing pin: $PIN" >&2
             exit 1
         fi
-        pin_sha=$(git -C "$PIN" rev-parse HEAD)
+        # The simulator image runs as root against a checkout it does not own.
+        pin_sha=$(git -C "$PIN" -c safe.directory="$PIN" rev-parse HEAD 2>/dev/null \
+            || sha256sum "$PIN/py/persistentcode.h" | awk '{print $1}')
         patch_sha=$(sha256sum "$VARIANT/unix-port.patch" | awk '{print $1}')
         stamp="$ROOT/build/oracle/src.stamp"
         want="$pin_sha $patch_sha"
