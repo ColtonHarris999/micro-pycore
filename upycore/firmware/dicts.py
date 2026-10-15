@@ -210,7 +210,8 @@ def _map_del(c, k, is_set):
 
 def _dictop(op, a, b, c):
     if op == 0:
-        s = _newset(0)
+        # mp_obj_new_set: alloc is the item count, not an empty map that grows.
+        s = _newset(len(a))
         for k in a:
             _map_put(s, k, NULL, True)
         return s
@@ -400,10 +401,26 @@ def set__clear(self):
     return None
 
 
+def _set_clone(s):
+    # Slot-for-slot copy. Reinserting would rehash and change iteration order.
+    n = _ld(s, 1)
+    r = _newset(n)
+    if n:
+        _wcopy(_ld(r, 2), 0, _ld(s, 2), 0, n)
+    _st(r, 0, _ld(s, 0))
+    return r
+
+
+def _set_toggle(s, k):
+    # ADD_IF_NOT_FOUND_OR_REMOVE_IF_FOUND, one probe's worth of either path.
+    if _map_find(s, k, True) >= 0:
+        _map_del(s, k, True)
+    else:
+        _map_put(s, k, NULL, True)
+
+
 def set__copy(self):
-    r = _newset(0)
-    _set_add_iter(r, self)
-    return _set_freeze(r, self)
+    return _set_freeze(_set_clone(self), self)
 
 
 def frozenset__copy(self):
@@ -487,13 +504,9 @@ def frozenset__difference(self, *args):
 
 
 def set__symmetric_difference(self, other):
-    r = _newset(0)
-    for k in self:
-        if k not in other:
-            _map_put(r, k, NULL, True)
+    r = _set_clone(self)
     for k in other:
-        if k not in self:
-            _map_put(r, k, NULL, True)
+        _set_toggle(r, k)
     return _set_freeze(r, self)
 
 
@@ -502,17 +515,8 @@ def frozenset__symmetric_difference(self, other):
 
 
 def set__symmetric_difference_update(self, other):
-    add = []
-    drop = []
     for k in other:
-        if k in self:
-            drop.append(k)
-        else:
-            add.append(k)
-    for k in drop:
-        _map_del(self, k, True)
-    for k in add:
-        _map_put(self, k, NULL, True)
+        _set_toggle(self, k)
     return None
 
 
