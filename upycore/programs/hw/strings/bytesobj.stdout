@@ -1,0 +1,8 @@
+b'ABc' 65 b'Bc' 3 b'abc' b'ABC'
+1 1 True
+ABc b'ABC' 6162
+b'abcd' b'abcd'
+b'Abcd'
+b'ab' b'abab' True
+b"a'b" b''
+IndexError bytes index out of range

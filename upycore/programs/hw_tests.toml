@@ -1,0 +1,84 @@
+# Hardware tests. Each entry is one MicroPython program.
+#
+#   make test                 build the simulator and run every test
+#   make test-hw              the same suite without the host unit tests
+#   make regen-goldens       rewrite the .stdout/.stderr/.exit files from the oracle
+#   python3 upycore/tools/hw_tests.py --list
+#   python3 upycore/tools/hw_tests.py --area alu
+#
+# The host compiles the program with mpy-cross, links it with the firmware,
+# and boots that image. The golden files are the unix oracle's stdout,
+# stderr, and exit status. `modules` names frozen modules linked into the
+# image (name=path, path relative to upycore/programs).
+#
+# xfail is a known mismatch, in words. A failure is XFAIL. A pass is XPASS
+# and fails the suite, so the marker comes off with the fix.
+# uncaught: the oracle prints the traceback on stdout; the golden stores
+# it as stderr, which is where the device prints it.
+# oracle = false: the unix port cannot import a filesystem module, so the
+# golden is the frozen-module result and regen leaves it alone.
+
+[smoke]
+hello = { file = "hw/smoke/hello.py" }
+raise_err = { file = "hw/smoke/raise_err.py", uncaught = true }
+exit_code = { file = "hw/smoke/exit_code.py" }
+
+[alu]
+arith = { file = "hw/alu/arith.py" }
+bitwise = { file = "hw/alu/bitwise.py" }
+compare = { file = "hw/alu/compare.py" }
+truth = { file = "hw/alu/truth.py" }
+divzero = { file = "hw/alu/divzero.py" }
+overflow = { file = "hw/alu/overflow.py" }
+floats = { file = "hw/alu/floats.py", cycles = 30_000_000, xfail = "float values do not match the oracle" }
+complex = { file = "hw/alu/complex.py", cycles = 30_000_000, xfail = "complex values do not match the oracle" }
+
+[control]
+branch = { file = "hw/control/branch.py" }
+loops = { file = "hw/control/loops.py" }
+for_iter = { file = "hw/control/for_iter.py" }
+
+[calls]
+call_funcs = { file = "hw/calls/funcs.py" }
+varargs = { file = "hw/calls/varargs.py" }
+closure = { file = "hw/calls/closure.py" }
+recursion = { file = "hw/calls/recursion.py", cycles = 40_000_000, timeout = 240 }
+
+[containers]
+lists = { file = "hw/containers/lists.py" }
+tuples = { file = "hw/containers/tuples.py" }
+dicts = { file = "hw/containers/dicts.py" }
+sets = { file = "hw/containers/sets.py" }
+set_order = { file = "hw/containers/set_order.py", xfail = "set iteration order does not match the oracle" }
+unpack = { file = "hw/containers/unpack.py" }
+
+[strings]
+text = { file = "hw/strings/text.py" }
+unicode = { file = "hw/strings/unicode.py", xfail = "len() rejects a non-ASCII str" }
+bytesobj = { file = "hw/strings/bytesobj.py" }
+format = { file = "hw/strings/format.py" }
+
+[exceptions]
+handling = { file = "hw/exceptions/handling.py" }
+custom = { file = "hw/exceptions/custom.py" }
+with_stmt = { file = "hw/exceptions/with_stmt.py" }
+
+[objects]
+classes = { file = "hw/objects/classes.py" }
+inherit = { file = "hw/objects/inherit.py" }
+props = { file = "hw/objects/props.py" }
+
+[builtins]
+builtin_fns = { file = "hw/builtins/funcs.py" }
+method_getattr = { file = "hw/builtins/method_getattr.py", xfail = "getattr does not resolve list methods" }
+sysmod = { file = "hw/builtins/sysmod.py" }
+gcmod = { file = "hw/builtins/gcmod.py", cycles = 40_000_000 }
+
+[modules]
+import_missing = { file = "hw/modules/import_missing.py" }
+use_helper = { file = "hw/modules/use_helper.py", modules = ["helper=hw/modules/helper.py"], oracle = false }
+use_pkg = { file = "hw/modules/use_pkg.py", modules = ["pkg=hw/modules/pkg/__init__.py", "pkg.sub=hw/modules/pkg/sub.py"], oracle = false, xfail = "a frozen package body does not bind its globals" }
+
+[integ]
+fib = { file = "hw/integ/fib.py" }
+sort = { file = "hw/integ/sort.py" }

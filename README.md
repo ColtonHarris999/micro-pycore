@@ -23,6 +23,24 @@ python3 upycore/tools/mpy_build.py oracle upycore/programs/hello.py
 status. `oracle` runs the same file on the unix port. Build that port with
 `make oracle` (needs `i686-linux-gnu-gcc`).
 
+## Hardware suite
+
+`upycore/programs/hw_tests.toml` is the suite. Each entry is a MicroPython
+program under `upycore/programs/hw/`. The host compiles it with `mpy-cross`,
+links that bytecode and the firmware into a flash image, and the simulator
+boots the image so `_boot` runs the program. The run passes when stdout,
+stderr, and the exit status match the golden files beside the source.
+Those files are the unix oracle's output. `make test` runs the suite.
+`make regen-goldens` rewrites the goldens after `make oracle`. An `xfail`
+entry is a known mismatch: the run is expected to fail, and a pass fails
+the suite so the marker is removed with the fix.
+
+```bash
+python3 upycore/tools/hw_tests.py --list
+python3 upycore/tools/hw_tests.py --area alu
+python3 upycore/tools/hw_tests.py 'dict*'
+```
+
 ## Layout
 
 | Path | Role |

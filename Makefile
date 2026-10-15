@@ -1,6 +1,8 @@
 # uPyCore: MicroPython bytecode CPU.
 #
-#   make test          build mpy-cross if needed, verilate, run hello and raise
+#   make test          build mpy-cross if needed, verilate, run the hardware suite
+#   make test-hw       the hardware suite on its own
+#   make regen-goldens  rewrite suite goldens from the unix oracle
 #   make run RUN=path  run one MicroPython program
 #   make oracle        build the 32-bit unix oracle and smoke it
 
@@ -11,8 +13,10 @@ RUN ?= upycore/programs/hello.py
 
 DOCKER_IMAGE ?= upycore-sim:local
 
+ORACLE := build/oracle/src/ports/unix/build-upycore/micropython
+
 .PHONY: test sim fw run oracle oracle-header oracle-variant oracle-smoke mpy-cross \
-	docker-build docker-test clean
+	docker-build docker-test test-hw regen-goldens check-goldens clean
 
 $(MPY_CROSS):
 	variants/upycore/build.sh mpy-cross
@@ -30,17 +34,21 @@ run: $(MPY_CROSS)
 
 test: $(MPY_CROSS)
 	$(PYTHON) upycore/tests/test_mpy_periph_model.py
+	$(PYTHON) upycore/tests/test_hw_manifest.py
 	$(PYTHON) $(BUILD_PY) sim
-	@mkdir -p build/mpy/check
-	$(PYTHON) $(BUILD_PY) run upycore/programs/hello.py > build/mpy/check/hello.stdout
-	printf 'hello\n' | cmp -s - build/mpy/check/hello.stdout
-	@set +e; \
-	$(PYTHON) $(BUILD_PY) run upycore/programs/raise.py > build/mpy/check/raise.stdout 2> build/mpy/check/raise.stderr; \
-	rc=$$?; \
-	set -e; \
-	test "$$rc" = 1; \
-	grep -q "ValueError: nope" build/mpy/check/raise.stderr; \
-	test ! -s build/mpy/check/raise.stdout
+	$(PYTHON) upycore/tools/hw_tests.py
+	@if [ -x "$(ORACLE)" ]; then $(PYTHON) upycore/tools/hw_tests.py --check-goldens; fi
+
+test-hw: $(MPY_CROSS)
+	$(PYTHON) $(BUILD_PY) sim
+	$(PYTHON) upycore/tools/hw_tests.py
+
+regen-goldens:
+	variants/upycore/build.sh variant
+	$(PYTHON) upycore/tools/hw_tests.py --regen
+
+check-goldens:
+	$(PYTHON) upycore/tools/hw_tests.py --check-goldens
 
 oracle-header:
 	variants/upycore/build.sh header

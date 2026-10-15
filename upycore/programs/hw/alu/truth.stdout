@@ -1,0 +1,26 @@
+False False True
+True True False
+True True False
+False False True
+True True False
+False False True
+True True False
+False False True
+True True False
+False False True
+True True False
+False False True
+True True False
+False False True
+True True False
+False False True
+eval 0
+and 0
+eval 1
+or 1
+eval 2
+eval 3
+and2 3
+eval 0
+eval 4
+or2 4

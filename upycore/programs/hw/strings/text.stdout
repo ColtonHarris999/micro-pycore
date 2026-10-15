@@ -1,0 +1,10 @@
+e o ell He llo 5
+hello HELLO 2 -1
+HeLLo 2
+True True False
+ab b a
+['a', 'b', 'c'] ['a', 'b'] 1ab2ab3
+('a', 'b', 'c') ('a', 'b', 'c')
+ab ababab True True
+"a'b" 'a"b' 'a\nb'
+IndexError string index out of range

@@ -1,0 +1,11 @@
+zero ZeroDivisionError divide by zero
+value ValueError ('x',)
+fin
+ok
+else2
+fin2
+inner
+outer ('k',)
+AssertionError nope
+ValueError('x',)
+i

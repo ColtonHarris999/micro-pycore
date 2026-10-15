@@ -1,0 +1,3 @@
+floordiv ZeroDivisionError divide by zero
+mod ZeroDivisionError divide by zero
+div ZeroDivisionError divide by zero

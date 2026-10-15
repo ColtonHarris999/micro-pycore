@@ -1,0 +1,3 @@
+shl OverflowError result overflows long long storage
+add OverflowError result overflows long long storage
+mul OverflowError result overflows long long storage
