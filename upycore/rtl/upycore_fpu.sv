@@ -1,0 +1,774 @@
+`include "upycore_defs.svh"
+
+// Binary64 floating-point unit for the execute fabric.
+//
+// Three hardware pipelines do the real arithmetic -- upycore_fp_add
+// (add / subtract), upycore_fp_mul and upycore_fp_divrem (divide, fmod) --
+// and a small sequencer composes everything else out of them exactly the
+// way CPython does in floatobject.c / complexobject.c, so the results are
+// bit-identical to the host for every operation that is a fixed sequence
+// of IEEE operations:
+//
+//   ADD SUB MUL TRUE_DIV   one pipeline pass (pass-through, no extra cycle)
+//   MOD                    fmod, then the sign fix-up add        (float_rem)
+//   FLOOR_DIV              fmod, sub, div, fix-ups, floor        (float_divmod)
+//   POWER                  CPython's special cases; x ** +-1, +-2 by
+//                          multiply / divide, everything else on the
+//                          upycore_fp_pow unit (2 ** (y log2 x), see
+//                          docs/alu.md for the accuracy versus libm pow())
+//   NEG POS NOT EQ..GE     combinational, 1 cycle
+//   complex ADD SUB MUL    per-component sequences (_Py_c_sum/_diff/_prod)
+//   complex TRUE_DIV       Smith's algorithm as in _Py_c_quot
+//   complex ABS            scaled hypot → a real FLOAT (inf/NaN/zero are
+//                          combinational; otherwise y/x, square, +1, sqrt, *x)
+//   complex EQ NE NEG NOT  combinational, 1 cycle
+//
+// exception_o replaces done_o when the operation ends in a Python
+// exception: ZeroDivisionError (x / 0.0, x // 0.0, x % 0.0, 0.0 ** -y,
+// z / 0j), OverflowError (finite ** finite overflowing to inf), and the
+// one power case the hardware does not implement: a negative base with
+// a fractional exponent, which is a complex result in Python.  Division
+// by zero is reported in the accept cycle, before any pipeline starts.
+//
+// Operands are binary64 bit patterns already promoted by upycore_promote;
+// complex operands carry the imaginary part in [127:64].  Handshake:
+// level start_i, one-cycle done_o / exception_o, stall_o = start_i and
+// neither; withdrawing start_i aborts (see upycore_umul_seq.sv).
+module upycore_fpu #(
+    parameter int MUL_STEP = 14,
+    parameter int DIV_RL   = 2,
+    // Integer exponents with |n| <= POW_CHAIN_MAX use square-and-multiply
+    // (n = +-1, +-2: a single multiply / divide, exact to the last rounding);
+    // larger ones go through upycore_fp_pow like fractional exponents.
+    parameter int POW_CHAIN_MAX = 2
+) (
+    input  logic         clk_i,
+    input  logic         rst_n_i,
+    input  logic         start_i,
+    input  logic [4:0]   op_i,
+    input  logic         complex_i,
+    input  logic [127:0] op_a_i,
+    input  logic [127:0] op_b_i,
+    output logic [127:0] result_o,
+    output logic         exception_o,
+    output logic         done_o,
+    output logic         stall_o,
+    output logic         busy_o
+);
+
+    // ---------------------------------------------------------------------
+    // Primitive pipelines and the shared issue bus
+    // ---------------------------------------------------------------------
+    logic        u_add_start, u_sub, u_mul_start, u_div_start, u_fmod, u_sqrt, u_pow_start;
+    logic [63:0] u_a, u_b;
+    logic [63:0] add_res, mul_res, div_res, pow_res;
+    logic        add_done, mul_done, div_done, pow_done;
+    logic        add_busy, mul_busy, div_busy, pow_busy;
+    logic        u_done;
+    logic [63:0] u_res;
+
+    upycore_fp_add u_add (
+        .clk_i(clk_i), .rst_n_i(rst_n_i),
+        .start_i(u_add_start), .sub_i(u_sub),
+        .op_a_i(u_a), .op_b_i(u_b),
+        .result_o(add_res), .done_o(add_done), .busy_o(add_busy)
+    );
+
+    // One significand multiplier (POW_LMW x 53, the wider of the two users)
+    // serves both upycore_fp_mul and upycore_fp_pow; the sequencer never has
+    // both in flight, so the power unit simply takes the bus while it runs.
+    localparam int POW_LMW = 75;
+    logic                 sm_start, fm_mul_start, pw_mul_start, sm_done, sm_busy;
+    logic [POW_LMW-1:0]   sm_a, pw_mul_a;
+    logic [52:0]          sm_b, fm_mul_a, fm_mul_b, pw_mul_b;
+    logic [POW_LMW+52:0]  sm_product;
+
+    assign sm_start = u_pow_start ? pw_mul_start : fm_mul_start;
+    assign sm_a     = u_pow_start ? pw_mul_a : {{(POW_LMW-53){1'b0}}, fm_mul_a};
+    assign sm_b     = u_pow_start ? pw_mul_b : fm_mul_b;
+
+    upycore_umul_seq #(.AW(POW_LMW), .BW(53), .STEP(MUL_STEP)) u_sig_mul (
+        .clk_i(clk_i), .rst_n_i(rst_n_i),
+        .start_i(sm_start),
+        .op_a_i(sm_a), .op_b_i(sm_b),
+        .product_o(sm_product), .done_o(sm_done), .busy_o(sm_busy)
+    );
+
+    upycore_fp_mul u_mul (
+        .clk_i(clk_i), .rst_n_i(rst_n_i),
+        .start_i(u_mul_start),
+        .op_a_i(u_a), .op_b_i(u_b),
+        .result_o(mul_res), .done_o(mul_done), .busy_o(mul_busy),
+        .mul_start_o(fm_mul_start), .mul_a_o(fm_mul_a), .mul_b_o(fm_mul_b),
+        .mul_product_i(sm_product[105:0]), .mul_done_i(sm_done && !u_pow_start),
+        .mul_busy_i(sm_busy && !u_pow_start)
+    );
+
+    upycore_fp_divrem #(.RL(DIV_RL)) u_div (
+        .clk_i(clk_i), .rst_n_i(rst_n_i),
+        .start_i(u_div_start), .fmod_i(u_fmod), .sqrt_i(u_sqrt),
+        .op_a_i(u_a), .op_b_i(u_b),
+        .result_o(div_res), .done_o(div_done), .busy_o(div_busy)
+    );
+
+    upycore_fp_pow #(.LMW(POW_LMW)) u_pow (
+        .clk_i(clk_i), .rst_n_i(rst_n_i),
+        .start_i(u_pow_start),
+        .op_x_i(u_a), .op_y_i(u_b),
+        .result_o(pow_res), .done_o(pow_done), .busy_o(pow_busy),
+        .mul_start_o(pw_mul_start), .mul_a_o(pw_mul_a), .mul_b_o(pw_mul_b),
+        .mul_product_i(sm_product), .mul_done_i(sm_done && u_pow_start)
+    );
+
+    assign u_done = add_done | mul_done | div_done | pow_done;
+    assign u_res  = add_done ? add_res : (mul_done ? mul_res : (div_done ? div_res : pow_res));
+
+    // ---------------------------------------------------------------------
+    // Sequencer state
+    // ---------------------------------------------------------------------
+    typedef enum logic [5:0] {
+        S_IDLE,
+        S_DIRECT,                       // scalar add/sub/mul/div pass-through
+        S_MOD_FMOD, S_MOD_FIX, S_MOD_ADD,
+        S_FD_FMOD, S_FD_SUB, S_FD_DIV, S_FD_FIX, S_FD_SUB1,
+        S_FD_FLOOR, S_FD_DIFF, S_FD_HALF, S_FD_ADD1,
+        S_POW_NORM, S_POW_STEP, S_POW_SQR, S_POW_MUL, S_POW_FIN, S_POW_RECIP, S_POW_INV,
+        S_POW_END, S_POW_UNIT, S_POW_SQRT,
+        S_CADD_R, S_CADD_I,
+        S_CMUL_1, S_CMUL_2, S_CMUL_3, S_CMUL_4, S_CMUL_5, S_CMUL_6,
+        S_CDIV_1, S_CDIV_2, S_CDIV_3, S_CDIV_4, S_CDIV_5,
+        S_CDIV_6, S_CDIV_7, S_CDIV_8, S_CDIV_9,
+        S_CREC_CHK, S_CREC_R, S_CREC_I,     // complex / : inf / zero recovery
+        S_HYP_DIV, S_HYP_SQ, S_HYP_ADD, S_HYP_SQRT, S_HYP_MUL, // complex abs
+        S_DONE, S_EXC
+    } state_e;
+
+    state_e       state_r;
+    logic [63:0]  t0_r, t1_r, t2_r, t3_r;
+    logic [63:0]  pow_n_r;                // exponent bits below the MSB, MSB first
+    logic [63:0]  pow_n0_r;               // |exponent| as accepted (for the retry)
+    logic [6:0]   pow_cnt_r;              // how many of them remain
+    logic         pow_neg_r, pow_recip_r;
+    logic         cdiv_b_r;               // Smith's algorithm, |bi| > |br| path
+    logic [127:0] res_r;
+
+    // Operand shorthands.
+    logic [63:0] ar, ai, br, bi;
+    assign ar = op_a_i[63:0];
+    assign ai = op_a_i[127:64];
+    assign br = op_b_i[63:0];
+    assign bi = op_b_i[127:64];
+
+    // ---------------------------------------------------------------------
+    // Accept-cycle decode (state S_IDLE)
+    // ---------------------------------------------------------------------
+    typedef enum logic [1:0] { K_COMB, K_EXC, K_DIRECT, K_SEQ } kind_e;
+
+    kind_e        dec_kind;
+    logic [127:0] dec_result;
+    state_e       dec_next;
+    logic         dec_sub;                // DIRECT: subtract
+    logic         dec_div;                // DIRECT: divide (else add/mul)
+    logic         dec_mul;
+    logic         dec_cdiv_b;
+    logic         dec_pow_neg, dec_pow_recip;
+    logic [63:0]  dec_pow_n;
+
+    logic        a_nan, b_nan, a_inf, b_inf, a_zero, b_zero, b_int;
+    logic        a_abs_one, a_abs_gt_one;
+    logic        b_odd, b_gt0, b_lt0;
+    logic [63:0] a_abs, b_trunc_int;
+    logic        b_trunc_ok;
+    logic [63:0] br_abs, bi_abs;
+    logic [3:0]  cmp_rb;                   // |br| vs |bi|
+
+    assign a_nan  = upycore_f64_is_nan(ar);
+    assign b_nan  = upycore_f64_is_nan(br);
+    assign a_inf  = upycore_f64_is_inf(ar);
+    assign b_inf  = upycore_f64_is_inf(br);
+    assign a_zero = upycore_f64_is_zero(ar);
+    assign b_zero = upycore_f64_is_zero(br);
+    assign a_abs  = {1'b0, ar[62:0]};
+    assign a_abs_one    = (a_abs == UPY_F64_ONE);
+    assign a_abs_gt_one = upycore_f64_gt(a_abs, UPY_F64_ONE);
+    assign b_int  = upycore_f64_is_finite(br) && (upycore_f64_floor(br) == br);
+    assign b_odd  = upycore_f64_is_odd_integer(br);
+    assign b_gt0  = upycore_f64_gt(br, UPY_F64_PZERO);
+    assign b_lt0  = upycore_f64_lt_zero(br);
+    assign br_abs = {1'b0, br[62:0]};
+    assign bi_abs = {1'b0, bi[62:0]};
+    assign cmp_rb = upycore_f64_cmp(br_abs, bi_abs);
+
+    // complex abs: swap so hyp_x >= hyp_y (both magnitudes, +0 for a zero).
+    logic [63:0] ai_abs;
+    logic [3:0]  cmp_hyp;
+    logic [63:0] hyp_x, hyp_y;
+    assign ai_abs  = {1'b0, ai[62:0]};
+    assign cmp_hyp = upycore_f64_cmp(a_abs, ai_abs);
+    assign hyp_x   = (cmp_hyp[2] || cmp_hyp[1]) ? a_abs : ai_abs;
+    assign hyp_y   = (cmp_hyp[2] || cmp_hyp[1]) ? ai_abs : a_abs;
+
+    // ---- complex / : recovery of infinities and zeros (CPython 3.14) ----
+    // Smith's algorithm yields nan+nanj when exactly one operand holds an
+    // infinity; _Py_c_quot then rebuilds the result from signs alone:
+    //   a infinite, b finite:  x = copysign(isinf(ar) ? 1 : 0, ar), y likewise
+    //       from ai,  r = inf*(x*br + y*bi) + inf*(y*br - x*bi) j
+    //   b infinite, a finite:  x, y from br, bi,
+    //       r = 0.0*(ar*x + ai*y) + 0.0*(ai*x - ar*y) j
+    // x*v with x in {+-1, +-0} is +-v or +-0, so the products are sign /
+    // magnitude selects and only the two sums need the adder. The check is
+    // made from the operands, so finite-operand divisions never pay for it.
+    logic        a_has_inf, b_has_inf, a_fin, b_fin;
+    logic        crec_cand;               // one side infinite, the other finite
+    logic        crec_b;                  // the infinite side is b
+    logic [62:0] crec_r1m, crec_r2m, crec_i1m, crec_i2m;
+    logic [63:0] crec_r1, crec_r2, crec_i1, crec_i2;
+
+    assign a_has_inf = upycore_f64_is_inf(ar) || upycore_f64_is_inf(ai);
+    assign b_has_inf = upycore_f64_is_inf(br) || upycore_f64_is_inf(bi);
+    assign a_fin     = upycore_f64_is_finite(ar) && upycore_f64_is_finite(ai);
+    assign b_fin     = upycore_f64_is_finite(br) && upycore_f64_is_finite(bi);
+    assign crec_cand = (a_has_inf && b_fin) || (b_has_inf && a_fin);
+    assign crec_b    = b_has_inf && a_fin;
+
+    // magnitudes of the four products (x*br, y*bi, y*br, x*bi  /  ar*x, ai*y, ai*x, ar*y)
+    assign crec_r1m = crec_b ? (upycore_f64_is_inf(br) ? ar[62:0] : 63'd0)
+                             : (upycore_f64_is_inf(ar) ? br[62:0] : 63'd0);
+    assign crec_r2m = crec_b ? (upycore_f64_is_inf(bi) ? ai[62:0] : 63'd0)
+                             : (upycore_f64_is_inf(ai) ? bi[62:0] : 63'd0);
+    assign crec_i1m = crec_b ? (upycore_f64_is_inf(br) ? ai[62:0] : 63'd0)
+                             : (upycore_f64_is_inf(ai) ? br[62:0] : 63'd0);
+    assign crec_i2m = crec_b ? (upycore_f64_is_inf(bi) ? ar[62:0] : 63'd0)
+                             : (upycore_f64_is_inf(ar) ? bi[62:0] : 63'd0);
+    assign crec_r1 = {ar[63] ^ br[63], crec_r1m};
+    assign crec_r2 = {ai[63] ^ bi[63], crec_r2m};
+    assign crec_i1 = {ai[63] ^ br[63], crec_i1m};
+    assign crec_i2 = {ar[63] ^ bi[63], crec_i2m};
+
+    // inf * s  (a infinite)  or  0.0 * s  (b infinite), s finite or inf.
+    function automatic logic [63:0] crec_scale(input logic [63:0] s, input logic by_zero);
+        if (by_zero) crec_scale = upycore_f64_is_inf(s)  ? UPY_F64_QNAN : {s[63], 63'd0};
+        else         crec_scale = upycore_f64_is_zero(s) ? UPY_F64_QNAN : {s[63], UPY_F64_PINF[62:0]};
+    endfunction
+
+    logic [63:0] b_trunc_abs;
+    logic        pow_n_small;
+    always_comb begin
+        b_trunc_ok = upycore_float_trunc_int64(br, b_trunc_int);
+    end
+    assign b_trunc_abs = b_trunc_int[63] ? (~b_trunc_int + 64'd1) : b_trunc_int;
+    assign pow_n_small = (b_trunc_abs <= 64'(POW_CHAIN_MAX));
+
+    always_comb begin
+        dec_kind      = K_EXC;
+        dec_result    = '0;
+        dec_next      = S_IDLE;
+        dec_sub       = 1'b0;
+        dec_div       = 1'b0;
+        dec_mul       = 1'b0;
+        dec_cdiv_b    = 1'b0;
+        dec_pow_neg   = 1'b0;
+        dec_pow_recip = 1'b0;
+        dec_pow_n     = '0;
+
+        if (!complex_i) begin
+            unique case (op_i)
+                UPY_ALU_ADD: begin dec_kind = K_DIRECT; end
+                UPY_ALU_SUB: begin dec_kind = K_DIRECT; dec_sub = 1'b1; end
+                UPY_ALU_MUL: begin dec_kind = K_DIRECT; dec_mul = 1'b1; end
+                UPY_ALU_TRUE_DIV: begin
+                    dec_kind = b_zero ? K_EXC : K_DIRECT;
+                    dec_div  = 1'b1;
+                end
+                UPY_ALU_MOD: begin
+                    dec_kind = b_zero ? K_EXC : K_SEQ;
+                    dec_next = S_MOD_FMOD;
+                end
+                UPY_ALU_FLOOR_DIV: begin
+                    dec_kind = b_zero ? K_EXC : K_SEQ;
+                    dec_next = S_FD_FMOD;
+                end
+                UPY_ALU_POWER: begin
+                    // CPython float_pow(), special cases first.
+                    dec_kind = K_COMB;
+                    if (b_zero) begin
+                        dec_result = {64'd0, UPY_F64_ONE};
+                    end else if (a_nan) begin
+                        dec_result = {64'd0, ar};
+                    end else if (b_nan) begin
+                        dec_result = {64'd0, (ar == UPY_F64_ONE) ? UPY_F64_ONE : br};
+                    end else if (b_inf) begin
+                        if (a_abs_one)                     dec_result = {64'd0, UPY_F64_ONE};
+                        else if (b_gt0 == a_abs_gt_one)    dec_result = {64'd0, UPY_F64_PINF};
+                        else                               dec_result = {64'd0, UPY_F64_PZERO};
+                    end else if (a_inf) begin
+                        if (b_gt0) dec_result = {64'd0, b_odd ? ar : a_abs};
+                        else       dec_result = {64'd0, b_odd ? {ar[63], 63'd0} : UPY_F64_PZERO};
+                    end else if (a_zero) begin
+                        if (b_lt0) dec_kind = K_EXC;                 // ZeroDivisionError
+                        else       dec_result = {64'd0, b_odd ? ar : UPY_F64_PZERO};
+                    end else if (!b_int && ar[63]) begin
+                        dec_kind = K_EXC;   // complex result in Python: not in hardware
+                    end else if (a_abs_one) begin
+                        dec_result = {64'd0, (ar[63] && b_odd) ? UPY_F64_NONE : UPY_F64_ONE};
+                    end else if (br == UPY_F64_HALF) begin
+                        // x ** 0.5: correctly rounded square root on the divider
+                        dec_kind = K_SEQ;
+                        dec_next = S_POW_SQRT;
+                    end else if (b_int && b_trunc_ok && pow_n_small) begin
+                        // x ** n, |n| <= POW_CHAIN_MAX: square-and-multiply
+                        dec_kind      = K_SEQ;
+                        dec_next      = S_POW_NORM;
+                        dec_pow_neg   = ar[63] && b_odd;
+                        dec_pow_recip = b_lt0;
+                        dec_pow_n     = b_trunc_abs;
+                    end else begin
+                        // fractional, large or non-int64 exponent: 2 ** (y log2 |x|)
+                        dec_kind      = K_SEQ;
+                        dec_next      = S_POW_UNIT;
+                        dec_pow_neg   = ar[63] && b_odd;
+                    end
+                end
+                UPY_ALU_NEG: begin
+                    dec_kind   = K_COMB;
+                    dec_result = {64'd0, ~ar[63], ar[62:0]};
+                end
+                UPY_ALU_POS, UPY_ALU_PASS: begin
+                    dec_kind   = K_COMB;
+                    dec_result = {64'd0, ar};
+                end
+                UPY_ALU_NOT: begin
+                    dec_kind   = K_COMB;
+                    dec_result = {127'd0, a_zero};
+                end
+                UPY_ALU_EQ, UPY_ALU_NE, UPY_ALU_LT, UPY_ALU_LE, UPY_ALU_GT, UPY_ALU_GE: begin
+                    dec_kind   = K_COMB;
+                    dec_result = {127'd0, upycore_f64_compare_op(op_i, ar, br)};
+                end
+                default: begin
+                    dec_kind = K_EXC;
+                end
+            endcase
+        end else begin
+            unique case (op_i)
+                UPY_ALU_ADD: begin dec_kind = K_SEQ; dec_next = S_CADD_R; end
+                UPY_ALU_SUB: begin dec_kind = K_SEQ; dec_next = S_CADD_R; dec_sub = 1'b1; end
+                UPY_ALU_MUL: begin dec_kind = K_SEQ; dec_next = S_CMUL_1; end
+                UPY_ALU_TRUE_DIV: begin
+                    // _Py_c_quot: scale by the larger component.
+                    if (cmp_rb[2] || cmp_rb[1]) begin          // |br| >= |bi|
+                        dec_kind   = (br_abs == 64'd0) ? K_EXC : K_SEQ;
+                        dec_next   = S_CDIV_1;
+                    end else if (cmp_rb[0]) begin               // |bi| > |br|
+                        dec_kind   = K_SEQ;
+                        dec_next   = S_CDIV_1;
+                        dec_cdiv_b = 1'b1;
+                    end else if (crec_cand) begin
+                        // b has a NaN component next to an infinity and a is
+                        // finite: Smith gives nan+nanj, the recovery still
+                        // applies (the NaN acts as +-0).
+                        dec_kind   = K_SEQ;
+                        dec_next   = S_CREC_R;
+                    end else begin                              // a NaN component
+                        dec_kind   = K_COMB;
+                        dec_result = {UPY_F64_QNAN, UPY_F64_QNAN};
+                    end
+                end
+                UPY_ALU_NEG: begin
+                    dec_kind   = K_COMB;
+                    dec_result = {~ai[63], ai[62:0], ~ar[63], ar[62:0]};
+                end
+                UPY_ALU_POS, UPY_ALU_PASS: begin
+                    dec_kind   = K_COMB;
+                    dec_result = op_a_i;
+                end
+                UPY_ALU_NOT: begin
+                    dec_kind   = K_COMB;
+                    dec_result = {127'd0, upycore_f64_is_zero(ar) && upycore_f64_is_zero(ai)};
+                end
+                UPY_ALU_EQ: begin
+                    dec_kind   = K_COMB;
+                    dec_result = {127'd0, upycore_f64_eq(ar, br) && upycore_f64_eq(ai, bi)};
+                end
+                UPY_ALU_NE: begin
+                    dec_kind   = K_COMB;
+                    dec_result = {127'd0, !(upycore_f64_eq(ar, br) && upycore_f64_eq(ai, bi))};
+                end
+                UPY_ALU_ABS: begin
+                    // CPython c_abs / hypot: an infinity wins over a NaN,
+                    // then NaN, then a zero component (result is the other
+                    // magnitude, +0 when both are zero). The general case
+                    // is sqrt(x^2+y^2) scaled so the square cannot overflow.
+                    if (upycore_f64_is_inf(ar) || upycore_f64_is_inf(ai)) begin
+                        dec_kind   = K_COMB;
+                        dec_result = {64'd0, UPY_F64_PINF};
+                    end else if (upycore_f64_is_nan(ar) || upycore_f64_is_nan(ai)) begin
+                        dec_kind   = K_COMB;
+                        dec_result = {64'd0, UPY_F64_QNAN};
+                    end else if (upycore_f64_is_zero(a_abs) || upycore_f64_is_zero(ai_abs)) begin
+                        dec_kind   = K_COMB;
+                        dec_result = {64'd0, hyp_x};
+                    end else begin
+                        dec_kind = K_SEQ;
+                        dec_next = S_HYP_DIV;
+                    end
+                end
+                default: begin
+                    dec_kind = K_EXC;
+                end
+            endcase
+        end
+    end
+
+    // ---------------------------------------------------------------------
+    // Issue logic: which primitive runs in the current state, on what
+    // ---------------------------------------------------------------------
+    // Complex-division operand roles (Smith's algorithm, both scalings).
+    //   path A (|br| >= |bi|): ratio = bi/br, denom = br + bi*ratio,
+    //      rr = (ar + ai*ratio)/denom, ri = (ai - ar*ratio)/denom
+    //   path B (|bi| >  |br|): ratio = br/bi, denom = br*ratio + bi,
+    //      rr = (ar*ratio + ai)/denom, ri = (ai*ratio - ar)/denom
+    always_comb begin
+        u_add_start = 1'b0;
+        u_sub       = 1'b0;
+        u_mul_start = 1'b0;
+        u_div_start = 1'b0;
+        u_fmod      = 1'b0;
+        u_sqrt      = 1'b0;
+        u_pow_start = 1'b0;
+        u_a         = ar;
+        u_b         = br;
+
+        unique case (state_r)
+            S_IDLE: begin
+                // Scalar add/sub/mul/div start in the accept cycle itself.
+                if (start_i && dec_kind == K_DIRECT) begin
+                    u_add_start = !dec_mul && !dec_div;
+                    u_sub       = dec_sub;
+                    u_mul_start = dec_mul;
+                    u_div_start = dec_div;
+                end
+            end
+            S_DIRECT: begin
+                u_add_start = add_busy;
+                u_sub       = (op_i == UPY_ALU_SUB);
+                u_mul_start = mul_busy;
+                u_div_start = div_busy;
+            end
+
+            // ---- float % ----
+            S_MOD_FMOD: begin u_div_start = 1'b1; u_fmod = 1'b1; end
+            S_MOD_ADD:  begin u_add_start = 1'b1; u_a = t0_r; u_b = br; end
+
+            // ---- float // ----
+            S_FD_FMOD:  begin u_div_start = 1'b1; u_fmod = 1'b1; end
+            S_FD_SUB:   begin u_add_start = 1'b1; u_sub = 1'b1; u_a = ar; u_b = t0_r; end
+            S_FD_DIV:   begin u_div_start = 1'b1; u_a = t1_r; u_b = br; end
+            S_FD_SUB1:  begin u_add_start = 1'b1; u_sub = 1'b1; u_a = t1_r; u_b = UPY_F64_ONE; end
+            S_FD_DIFF:  begin u_add_start = 1'b1; u_sub = 1'b1; u_a = t1_r; u_b = t2_r; end
+            S_FD_ADD1:  begin u_add_start = 1'b1; u_a = t2_r; u_b = UPY_F64_ONE; end
+
+            // ---- float ** (t0 = acc, t1 = base) ----
+            S_POW_SQR:   begin u_mul_start = 1'b1; u_a = t0_r; u_b = t0_r; end
+            S_POW_MUL:   begin u_mul_start = 1'b1; u_a = t0_r; u_b = t1_r; end
+            S_POW_RECIP: begin u_div_start = 1'b1; u_a = UPY_F64_ONE; u_b = t0_r; end
+            S_POW_INV:   begin u_div_start = 1'b1; u_a = UPY_F64_ONE; u_b = t1_r; end
+            S_POW_UNIT:  begin u_pow_start = 1'b1; u_a = a_abs; u_b = br; end
+            S_POW_SQRT:  begin u_div_start = 1'b1; u_sqrt = 1'b1; u_a = a_abs; end
+
+            // ---- complex + / - ----
+            S_CADD_R: begin u_add_start = 1'b1; u_sub = (op_i == UPY_ALU_SUB); u_a = ar; u_b = br; end
+            S_CADD_I: begin u_add_start = 1'b1; u_sub = (op_i == UPY_ALU_SUB); u_a = ai; u_b = bi; end
+
+            // ---- complex * ----
+            S_CMUL_1: begin u_mul_start = 1'b1; u_a = ar; u_b = br; end
+            S_CMUL_2: begin u_mul_start = 1'b1; u_a = ai; u_b = bi; end
+            S_CMUL_3: begin u_mul_start = 1'b1; u_a = ar; u_b = bi; end
+            S_CMUL_4: begin u_mul_start = 1'b1; u_a = ai; u_b = br; end
+            S_CMUL_5: begin u_add_start = 1'b1; u_sub = 1'b1; u_a = t0_r; u_b = t1_r; end
+            S_CMUL_6: begin u_add_start = 1'b1; u_a = t2_r; u_b = t3_r; end
+
+            // ---- complex / ----
+            S_CDIV_1: begin
+                u_div_start = 1'b1;
+                u_a = cdiv_b_r ? br : bi;  u_b = cdiv_b_r ? bi : br;      // ratio
+            end
+            S_CDIV_2: begin
+                u_mul_start = 1'b1;
+                u_a = cdiv_b_r ? br : bi;  u_b = t0_r;
+            end
+            S_CDIV_3: begin
+                u_add_start = 1'b1;                                       // denom
+                u_a = cdiv_b_r ? t1_r : br;  u_b = cdiv_b_r ? bi : t1_r;
+            end
+            S_CDIV_4: begin
+                u_mul_start = 1'b1;
+                u_a = cdiv_b_r ? ar : ai;  u_b = t0_r;
+            end
+            S_CDIV_5: begin
+                u_add_start = 1'b1;
+                u_a = cdiv_b_r ? t2_r : ar;  u_b = cdiv_b_r ? ai : t2_r;
+            end
+            S_CDIV_6: begin u_div_start = 1'b1; u_a = t2_r; u_b = t1_r; end   // rr
+            S_CDIV_7: begin
+                u_mul_start = 1'b1;
+                u_a = cdiv_b_r ? ai : ar;  u_b = t0_r;
+            end
+            S_CDIV_8: begin
+                u_add_start = 1'b1; u_sub = 1'b1;
+                u_a = cdiv_b_r ? t3_r : ai;  u_b = cdiv_b_r ? ar : t3_r;
+            end
+            S_CDIV_9: begin u_div_start = 1'b1; u_a = t3_r; u_b = t1_r; end   // ri
+            S_CREC_R: begin u_add_start = 1'b1; u_a = crec_r1; u_b = crec_r2; end
+            S_CREC_I: begin u_add_start = 1'b1; u_sub = 1'b1; u_a = crec_i1; u_b = crec_i2; end
+
+            // ---- complex abs: ratio = y/x, sqrt(1+ratio^2)*x ----
+            // t0 holds the running value, t1 the larger magnitude.
+            S_HYP_DIV:  begin u_div_start = 1'b1; u_a = t0_r; u_b = t1_r; end
+            S_HYP_SQ:   begin u_mul_start = 1'b1; u_a = t0_r; u_b = t0_r; end
+            S_HYP_ADD:  begin u_add_start = 1'b1; u_a = UPY_F64_ONE; u_b = t0_r; end
+            S_HYP_SQRT: begin u_div_start = 1'b1; u_sqrt = 1'b1; u_a = t0_r; end
+            S_HYP_MUL:  begin u_mul_start = 1'b1; u_a = t0_r; u_b = t1_r; end
+
+            default: ;
+        endcase
+    end
+
+    // ---------------------------------------------------------------------
+    // Sequencer
+    // ---------------------------------------------------------------------
+    logic        mod_fix_add;             // (b < 0) != (mod < 0), mod != 0
+    logic        fd_div_nonzero;
+    logic        fd_half_up;
+    logic [63:0] fd_floor;
+    logic        pow_overflow;
+    logic [6:0]  pow_lz;
+
+    assign mod_fix_add    = !upycore_f64_eq(t0_r, UPY_F64_PZERO) &&
+                            (b_lt0 != upycore_f64_lt_zero(t0_r));
+    assign fd_div_nonzero = !upycore_f64_eq(t1_r, UPY_F64_PZERO);
+    assign fd_floor       = upycore_f64_floor(t1_r);
+    assign fd_half_up     = upycore_f64_gt(t3_r, UPY_F64_HALF);
+    assign pow_overflow   = upycore_f64_is_inf(t0_r);
+    assign pow_lz         = upycore_clz64(pow_n_r);
+
+    always_ff @(posedge clk_i or negedge rst_n_i) begin
+        if (!rst_n_i) begin
+            state_r     <= S_IDLE;
+            t0_r <= '0; t1_r <= '0; t2_r <= '0; t3_r <= '0;
+            pow_n_r     <= '0;
+            pow_n0_r    <= '0;
+            pow_cnt_r   <= '0;
+            pow_neg_r   <= 1'b0;
+            pow_recip_r <= 1'b0;
+            cdiv_b_r    <= 1'b0;
+            res_r       <= '0;
+        end else if (!start_i) begin
+            state_r <= S_IDLE;
+        end else begin
+            unique case (state_r)
+                S_IDLE: begin
+                    if (dec_kind == K_DIRECT) begin
+                        state_r <= S_DIRECT;
+                    end else if (dec_kind == K_SEQ) begin
+                        state_r     <= dec_next;
+                        cdiv_b_r    <= dec_cdiv_b;
+                        pow_neg_r   <= dec_pow_neg;
+                        pow_recip_r <= dec_pow_recip;
+                        pow_n_r     <= dec_pow_n;
+                        pow_n0_r    <= dec_pow_n;
+                        t0_r        <= UPY_F64_ONE;        // pow accumulator
+                        t1_r        <= a_abs;             // pow base
+                        if (complex_i && (op_i == UPY_ALU_ABS)) begin
+                            t0_r <= hyp_y;                // smaller magnitude
+                            t1_r <= hyp_x;                // larger magnitude
+                        end
+                    end
+                    // K_COMB / K_EXC complete in this cycle.
+                end
+                S_DIRECT: begin
+                    if (u_done) state_r <= S_IDLE;
+                end
+
+                // ---- float % : CPython float_rem ----
+                S_MOD_FMOD: if (u_done) begin t0_r <= u_res; state_r <= S_MOD_FIX; end
+                S_MOD_FIX: begin
+                    if (mod_fix_add) begin
+                        state_r <= S_MOD_ADD;
+                    end else begin
+                        res_r   <= {64'd0, upycore_f64_eq(t0_r, UPY_F64_PZERO)
+                                           ? {br[63], 63'd0} : t0_r};
+                        state_r <= S_DONE;
+                    end
+                end
+                S_MOD_ADD: if (u_done) begin res_r <= {64'd0, u_res}; state_r <= S_DONE; end
+
+                // ---- float // : CPython float_divmod ----
+                S_FD_FMOD: if (u_done) begin t0_r <= u_res; state_r <= S_FD_SUB; end
+                S_FD_SUB:  if (u_done) begin t1_r <= u_res; state_r <= S_FD_DIV; end
+                S_FD_DIV:  if (u_done) begin t1_r <= u_res; state_r <= S_FD_FIX; end
+                S_FD_FIX:  state_r <= mod_fix_add ? S_FD_SUB1 : S_FD_FLOOR;
+                S_FD_SUB1: if (u_done) begin t1_r <= u_res; state_r <= S_FD_FLOOR; end
+                S_FD_FLOOR: begin
+                    if (fd_div_nonzero) begin
+                        t2_r    <= fd_floor;
+                        state_r <= S_FD_DIFF;
+                    end else begin
+                        res_r   <= {64'd0, ar[63] ^ br[63], 63'd0};
+                        state_r <= S_DONE;
+                    end
+                end
+                S_FD_DIFF: if (u_done) begin t3_r <= u_res; state_r <= S_FD_HALF; end
+                S_FD_HALF: begin
+                    if (fd_half_up) begin
+                        state_r <= S_FD_ADD1;
+                    end else begin
+                        res_r   <= {64'd0, t2_r};
+                        state_r <= S_DONE;
+                    end
+                end
+                S_FD_ADD1: if (u_done) begin res_r <= {64'd0, u_res}; state_r <= S_DONE; end
+
+                // ---- float ** : MSB-first square-and-multiply ----
+                S_POW_NORM: begin
+                    // acc = base; the exponent's leading one is consumed by
+                    // that, the remaining bits are walked high to low.
+                    t0_r      <= t1_r;
+                    pow_n_r   <= pow_n_r << (pow_lz + 7'd1);
+                    pow_cnt_r <= 7'd63 - pow_lz;
+                    state_r   <= S_POW_STEP;
+                end
+                S_POW_STEP: state_r <= (pow_cnt_r == 7'd0) ? S_POW_FIN : S_POW_SQR;
+                S_POW_SQR: if (u_done) begin
+                    t0_r <= u_res;
+                    if (pow_n_r[63]) begin
+                        state_r <= S_POW_MUL;
+                    end else begin
+                        pow_n_r   <= pow_n_r << 1;
+                        pow_cnt_r <= pow_cnt_r - 7'd1;
+                        state_r   <= S_POW_STEP;
+                    end
+                end
+                S_POW_MUL: if (u_done) begin
+                    t0_r      <= u_res;
+                    pow_n_r   <= pow_n_r << 1;
+                    pow_cnt_r <= pow_cnt_r - 7'd1;
+                    state_r   <= S_POW_STEP;
+                end
+                S_POW_FIN: begin
+                    // x ** -n: 1 / x**n, unless x**n overflowed -- then the
+                    // true result is tiny or subnormal and is recomputed as
+                    // (1/|x|) ** n, which cannot overflow (|x| > 1 here).
+                    if (!pow_recip_r)      state_r <= S_POW_END;
+                    else if (pow_overflow) state_r <= S_POW_INV;
+                    else                   state_r <= S_POW_RECIP;
+                end
+                S_POW_RECIP: if (u_done) begin t0_r <= u_res; state_r <= S_POW_END; end
+                S_POW_INV: if (u_done) begin
+                    t1_r        <= u_res;
+                    pow_n_r     <= pow_n0_r;
+                    pow_recip_r <= 1'b0;
+                    state_r     <= S_POW_NORM;
+                end
+                S_POW_END: begin
+                    if (pow_overflow) begin
+                        state_r <= S_EXC;                 // OverflowError
+                    end else begin
+                        res_r   <= {64'd0, t0_r[63] ^ pow_neg_r, t0_r[62:0]};
+                        state_r <= S_DONE;
+                    end
+                end
+                // ---- float ** : |x| ** y on the log / exp unit ----
+                S_POW_UNIT: if (u_done) begin t0_r <= u_res; state_r <= S_POW_END; end
+                // ---- float ** 0.5 : sqrt on the divider ----
+                S_POW_SQRT: if (u_done) begin t0_r <= u_res; state_r <= S_POW_END; end
+
+                // ---- complex + - ----
+                S_CADD_R: if (u_done) begin t0_r <= u_res; state_r <= S_CADD_I; end
+                S_CADD_I: if (u_done) begin res_r <= {u_res, t0_r}; state_r <= S_DONE; end
+
+                // ---- complex * ----
+                S_CMUL_1: if (u_done) begin t0_r <= u_res; state_r <= S_CMUL_2; end
+                S_CMUL_2: if (u_done) begin t1_r <= u_res; state_r <= S_CMUL_3; end
+                S_CMUL_3: if (u_done) begin t2_r <= u_res; state_r <= S_CMUL_4; end
+                S_CMUL_4: if (u_done) begin t3_r <= u_res; state_r <= S_CMUL_5; end
+                S_CMUL_5: if (u_done) begin t0_r <= u_res; state_r <= S_CMUL_6; end
+                S_CMUL_6: if (u_done) begin res_r <= {u_res, t0_r}; state_r <= S_DONE; end
+
+                // ---- complex / ----
+                S_CDIV_1: if (u_done) begin t0_r <= u_res; state_r <= S_CDIV_2; end
+                S_CDIV_2: if (u_done) begin t1_r <= u_res; state_r <= S_CDIV_3; end
+                S_CDIV_3: if (u_done) begin t1_r <= u_res; state_r <= S_CDIV_4; end
+                S_CDIV_4: if (u_done) begin t2_r <= u_res; state_r <= S_CDIV_5; end
+                S_CDIV_5: if (u_done) begin t2_r <= u_res; state_r <= S_CDIV_6; end
+                S_CDIV_6: if (u_done) begin t2_r <= u_res; state_r <= S_CDIV_7; end
+                S_CDIV_7: if (u_done) begin t3_r <= u_res; state_r <= S_CDIV_8; end
+                S_CDIV_8: if (u_done) begin t3_r <= u_res; state_r <= S_CDIV_9; end
+                S_CDIV_9: if (u_done) begin
+                    if (crec_cand) begin
+                        // An operand is infinite: look at the result first.
+                        t3_r    <= u_res;
+                        state_r <= S_CREC_CHK;
+                    end else begin
+                        res_r   <= {u_res, t2_r};
+                        state_r <= S_DONE;
+                    end
+                end
+                S_CREC_CHK: begin
+                    if (upycore_f64_is_nan(t2_r) && upycore_f64_is_nan(t3_r)) begin
+                        state_r <= S_CREC_R;
+                    end else begin
+                        res_r   <= {t3_r, t2_r};
+                        state_r <= S_DONE;
+                    end
+                end
+                S_CREC_R: if (u_done) begin t2_r <= crec_scale(u_res, crec_b); state_r <= S_CREC_I; end
+                S_CREC_I: if (u_done) begin
+                    res_r   <= {crec_scale(u_res, crec_b), t2_r};
+                    state_r <= S_DONE;
+                end
+
+                // ---- complex abs ----
+                S_HYP_DIV:  if (u_done) begin t0_r <= u_res; state_r <= S_HYP_SQ; end
+                S_HYP_SQ:   if (u_done) begin t0_r <= u_res; state_r <= S_HYP_ADD; end
+                S_HYP_ADD:  if (u_done) begin t0_r <= u_res; state_r <= S_HYP_SQRT; end
+                S_HYP_SQRT: if (u_done) begin t0_r <= u_res; state_r <= S_HYP_MUL; end
+                S_HYP_MUL:  if (u_done) begin res_r <= {64'd0, u_res}; state_r <= S_DONE; end
+
+                S_DONE, S_EXC: state_r <= S_IDLE;
+                default:       state_r <= S_IDLE;
+            endcase
+        end
+    end
+
+    // ---------------------------------------------------------------------
+    // Outputs
+    // ---------------------------------------------------------------------
+    always_comb begin
+        result_o    = res_r;
+        done_o      = 1'b0;
+        exception_o = 1'b0;
+        unique case (state_r)
+            S_IDLE: begin
+                if (start_i) begin
+                    unique case (dec_kind)
+                        K_COMB: begin done_o = 1'b1; result_o = dec_result; end
+                        K_EXC:  exception_o = 1'b1;
+                        default: ;
+                    endcase
+                end
+            end
+            S_DIRECT: begin
+                done_o   = u_done;
+                result_o = {64'd0, u_res};
+            end
+            S_DONE: done_o = 1'b1;
+            S_EXC:  exception_o = 1'b1;
+            default: ;
+        endcase
+    end
+
+    assign stall_o = start_i && !done_o && !exception_o;
+    assign busy_o  = (state_r != S_IDLE);
+
+endmodule

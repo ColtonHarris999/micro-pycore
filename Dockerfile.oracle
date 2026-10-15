@@ -1,4 +1,4 @@
-# MicroPython v1.29.0 oracle: host mpy-cross and the 32-bit mpycore unix
+# MicroPython v1.29.0 oracle: host mpy-cross and the 32-bit upycore unix
 # variant. Both are built once in this image. Bytecode is emitted later
 # with -msmall-int-bits=31, no -march, and -O0 (see oracle-header).
 FROM python:3.14-slim
@@ -18,18 +18,18 @@ RUN dpkg --add-architecture i386 \
 WORKDIR /src
 
 COPY vendor/micropython /src/vendor/micropython
-COPY variants/mpycore /src/variants/mpycore
+COPY variants/upycore /src/variants/upycore
 
 # Patch and compile inside the image. MPY_SRC skips the host-side copy.
 ENV MPY_SRC=/src/vendor/micropython
 
-RUN sh /src/variants/mpycore/build.sh mpy-cross \
-    && sh /src/variants/mpycore/build.sh variant \
+RUN sh /src/variants/upycore/build.sh mpy-cross \
+    && sh /src/variants/upycore/build.sh variant \
     && cp /src/vendor/micropython/mpy-cross/build/mpy-cross /usr/local/bin/mpy-cross \
-    && cp /src/vendor/micropython/ports/unix/build-mpycore/micropython /usr/local/bin/upycore-oracle \
-    && chmod 755 /src/variants/mpycore/oracle-header.sh /src/variants/mpycore/oracle-smoke.sh \
-    && ln -sf /src/variants/mpycore/oracle-header.sh /usr/local/bin/oracle-header \
-    && ln -sf /src/variants/mpycore/oracle-smoke.sh /usr/local/bin/oracle-smoke
+    && cp /src/vendor/micropython/ports/unix/build-upycore/micropython /usr/local/bin/upycore-oracle \
+    && chmod 755 /src/variants/upycore/oracle-header.sh /src/variants/upycore/oracle-smoke.sh \
+    && ln -sf /src/variants/upycore/oracle-header.sh /usr/local/bin/oracle-header \
+    && ln -sf /src/variants/upycore/oracle-smoke.sh /usr/local/bin/oracle-smoke
 
 # Runtime paths. Set after the build so the compile uses the tree binaries.
 ENV MPY_CROSS=/usr/local/bin/mpy-cross

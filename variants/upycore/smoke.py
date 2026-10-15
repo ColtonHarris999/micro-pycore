@@ -1,4 +1,4 @@
-# Identity and lock checks for the mpycore unix oracle.
+# Identity and lock checks for the uPyCore unix oracle.
 import gc
 import micropython
 import struct

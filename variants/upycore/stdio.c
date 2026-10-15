@@ -1,4 +1,4 @@
-// stdin, stdout, and stderr for the mpycore unix oracle.
+// stdin, stdout, and stderr for the uPyCore unix oracle.
 //
 // The stock unix port implements these as posix VFS files. That type needs
 // finalisers, which this variant turns off. These objects write each fd

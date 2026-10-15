@@ -1,12 +1,13 @@
 #!/bin/sh
 # Build the pinned MicroPython tree: host mpy-cross, then the 32-bit
-# mpycore unix variant. The pin checkout stays clean; the patch is applied
+# upycore unix variant. The pin checkout stays clean; the patch is applied
 # to a copy under build/oracle/src, or in place when MPY_SRC is set.
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 VARIANT="$SCRIPT_DIR"
+VARIANT_NAME=$(basename "$VARIANT")
 PIN="$ROOT/vendor/micropython"
 WORK="${MPY_SRC:-$ROOT/build/oracle/src}"
 CROSS="${ORACLE_CROSS_COMPILE:-i686-linux-gnu-}"
@@ -69,7 +70,7 @@ build_variant() {
     variant_stamp="$ROOT/build/oracle/variant.stamp"
     mkdir -p "$ROOT/build/oracle"
     if [ ! -f "$variant_stamp" ] || [ "$(cat "$variant_stamp")" != "$variant_id" ]; then
-        rm -rf "$WORK/ports/unix/build-mpycore"
+        rm -rf "$WORK/ports/unix/build-$VARIANT_NAME"
         printf '%s\n' "$variant_id" > "$variant_stamp"
     fi
     make -C "$WORK/ports/unix" -j"$JOBS" \
@@ -96,7 +97,7 @@ case "$cmd" in
         ;;
     smoke)
         build_variant
-        ORACLE_BIN="$WORK/ports/unix/build-mpycore/micropython" \
+        ORACLE_BIN="$WORK/ports/unix/build-$VARIANT_NAME/micropython" \
             "$VARIANT/oracle-smoke.sh"
         ;;
     *)

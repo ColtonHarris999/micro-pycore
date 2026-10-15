@@ -13,7 +13,7 @@
 // Extra features and the unix port turn finalisers on. A __del__ that
 // prints would desynchronize stdout. Posix VFS needs a finaliser, so the
 // VFS readers stay off. MICROPY_READER_POSIX still runs a script file.
-// Stdio objects are variants/mpycore/stdio.c, one fd each.
+// Stdio objects are variants/upycore/stdio.c, one fd each.
 #define MICROPY_ENABLE_FINALISER       (0)
 #define MICROPY_VFS_POSIX              (0)
 #define MICROPY_READER_VFS             (0)

@@ -1,12 +1,12 @@
 #!/bin/sh
-# Run the mpycore unix binary against variants/mpycore/smoke.py.
+# Run the upycore unix binary against variants/upycore/smoke.py.
 set -eu
 
 # $0 may be a symlink installed on PATH (the oracle image does this).
 SCRIPT_PATH=$(readlink -f "$0")
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
 ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
-BIN=${ORACLE_BIN:-$ROOT/build/oracle/src/ports/unix/build-mpycore/micropython}
+BIN=${ORACLE_BIN:-$ROOT/build/oracle/src/ports/unix/build-upycore/micropython}
 
 if [ ! -x "$BIN" ]; then
     echo "oracle binary is not built: $BIN" >&2
