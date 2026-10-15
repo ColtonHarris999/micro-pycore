@@ -49,7 +49,7 @@ lists = { file = "hw/containers/lists.py" }
 tuples = { file = "hw/containers/tuples.py" }
 dicts = { file = "hw/containers/dicts.py" }
 sets = { file = "hw/containers/sets.py" }
-set_order = { file = "hw/containers/set_order.py", xfail = "set iteration order does not match the oracle" }
+set_order = { file = "hw/containers/set_order.py" }
 unpack = { file = "hw/containers/unpack.py" }
 
 [strings]
