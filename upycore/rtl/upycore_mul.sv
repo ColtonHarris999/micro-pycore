@@ -31,9 +31,12 @@ module upycore_mul #(
     localparam int ACC_W = 64 + STEP + 2;
     localparam int CNT_W = (NSTEP > 1) ? $clog2(NSTEP) : 1;
 
-    initial begin
-        if ((64 % STEP) != 0) $fatal(1, "upycore_mul: STEP must divide 64");
-    end
+    // Elaboration check: keep out of the synthesis initial-procedure path.
+    generate
+        if ((64 % STEP) != 0) begin : gen_bad_step
+            nonexistent_module_STEP_must_divide_64 bad_step ();
+        end
+    endgenerate
 
     logic                    busy_r;
     logic                    done_r;

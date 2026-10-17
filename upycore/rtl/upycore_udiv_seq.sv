@@ -50,9 +50,12 @@ module upycore_udiv_seq #(
     localparam int BR = SQRT ? 2 * RL : RL;   // bits brought down per step
     localparam int TW = VW + BR;              // trial remainder width
 
-    initial begin
-        if (RL != 1 && RL != 2) $fatal(1, "upycore_udiv_seq: RL must be 1 or 2");
-    end
+    // Elaboration check: keep out of the synthesis initial-procedure path.
+    generate
+        if (RL != 1 && RL != 2) begin : gen_bad_rl
+            nonexistent_module_RL_must_be_1_or_2 bad_rl ();
+        end
+    endgenerate
 
     logic          busy_r;
     logic          done_r;

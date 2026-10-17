@@ -44,6 +44,26 @@ python3 upycore/tools/hw_tests.py --area alu
 python3 upycore/tools/hw_tests.py 'dict*'
 ```
 
+## Synthesis
+
+The hart and its components are written for a Yosys + yosys-slang backend
+pass (OSS CAD Suite). `make synth` elaborates every top; `make synth-gates`
+maps the logic tops (`mpy_core`, `mpy_alu`, decode, peripherals, …). Full-size
+`mpy_gc` / `mpy_mem` / `mpy_soc` stay elaborate-only unless named explicitly
+(gate-map a reduced collector with
+`python3 upycore/tools/mpy_synth.py --synth --gc-pool-bytes=4096 mpy_gc`).
+Set `SYNTH_TOP=…` to limit the run. Logs land in `build/synth/`.
+
+```bash
+make synth
+make synth SYNTH_TOP=mpy_core
+make synth-gates SYNTH_TOP=mpy_alu
+```
+
+Sim-only flash load (`+IMAGE` / `$readmemh`) and the GC table clear loop are
+behind `` `ifndef SYNTHESIS `` so the same RTL feeds Verilator and the
+backend flow.
+
 ## Layout
 
 | Path | Role |

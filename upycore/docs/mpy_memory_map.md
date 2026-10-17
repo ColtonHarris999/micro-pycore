@@ -151,7 +151,9 @@ image, flash store, unaligned access, bus fault, stack overflow, step limit.
 
 ## Where the constants live
 
-`upycore/rtl/mpy_defs.svh` holds the tag table, the widths, and this map.
+`upycore/rtl/mpy_defs.svh` holds the tag table, the widths, the register-file
+depth (`MPY_RF_DEPTH` / `MPY_RF_ADDR_W`), and this map.
 `upycore/rtl/mpy_regfile.sv` is the 64-entry array. `upycore/rtl/mpy_mem.sv`
 is flash, SRAM, the frame spill, and the other two windows.
 `upycore/rtl/upycore_defs.svh` holds the datapath opcodes.
+`make synth` elaborates these modules with Yosys + yosys-slang.
